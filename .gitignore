@@ -1,0 +1,15 @@
+# Downloads e resultados do build
+downloads/
+build-dir/
+repo/
+.flatpak-builder/
+*.flatpak
+
+# Gerados por criar-flatpak.sh (o script é a fonte de tudo)
+cc.frameperfect.FramePerfect.yml
+cc.frameperfect.FramePerfect.desktop
+cc.frameperfect.FramePerfect.metainfo.xml
+fontes.reg
+icons/
+scripts/
+__pycache__/
