@@ -657,6 +657,13 @@ for item in "$USER_FLATPAK"/* "$USER_FLATPAK"/.changed; do
     rm -rf "$dest"
     ln -s "$item" "$dest"
 done
+# O repo criado pelo ostree exige 3% do disco livre (~10 GB num disco de
+# 300 GB) e o export falha com "min-free-space-percent would be exceeded".
+# Usa o mesmo limite fixo da instalação --user do flatpak (500MB).
+flatpak run --filesystem="$DIR" --cwd="$DIR" --command=ostree org.flatpak.Builder \
+    init --repo=repo --mode=archive-z2
+flatpak run --filesystem="$DIR" --cwd="$DIR" --command=ostree org.flatpak.Builder \
+    config --repo=repo set core.min-free-space-size 500MB
 # --filesystem: o sandbox do Builder não enxerga pastas fora da home (ex.: /tmp)
 flatpak run --filesystem="$DIR" --cwd="$DIR" --command=flatpak-builder org.flatpak.Builder \
     "${BUILDER_ARGS[@]}" build-dir $APP_ID.yml
