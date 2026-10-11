@@ -259,6 +259,7 @@ REGEDIT4
 "Consolas"="Liberation Mono"
 "Segoe UI Symbol"="DejaVu Sans"
 "Segoe UI Emoji"="Noto Emoji"
+"Cambria Math"="Noto Emoji"
 EOF
 
 # Aplica o pacote de atualização do cliente (usado pelo lançador)
@@ -357,9 +358,11 @@ fi
 # um quadradinho a mais no texto ("confirma.□", "fila, □"), por isso:
 # - texto em Liberation Sans, que não tem ligaduras;
 # - a Noto Emoji vem com o glifo .notdef vazio (o quadrado depois do emoji);
+# - "Cambria Math" -> Noto Emoji: para 27C0-2BFF o WPF tenta Segoe UI Symbol
+#   (DejaVu Sans, sem o ⭕ de "🅱️ / ⭕ / Esc voltar") e depois Cambria Math;
 # - a Tahoma do Wine e a Barlow ("Tw Cen MT Condensed") vêm do build sem a
 #   ligadura (scripts/fontes.py), em /app/share/frameperfect/fontes.
-FONTES_VERSAO="4 $WINE_VERSAO"
+FONTES_VERSAO="5 $WINE_VERSAO"
 if [ "$(cat "$WINEPREFIX/.fp-fontes" 2>/dev/null)" != "$FONTES_VERSAO" ]; then
     echo "Instalando as fontes no prefixo"
     FONTES_WIN=$WINEPREFIX/drive_c/windows/Fonts
@@ -473,6 +476,28 @@ if [ "$(cat "$JOGO/.fp-links" 2>/dev/null)" != "$V_JOGO" ]; then
     ligar iguais
     echo "$V_JOGO" > "$JOGO/.fp-links"
 fi
+
+# Atalhos para o usuário achar as ROMs e as configs dos emuladores em
+# ~/.var/app/cc.frameperfect.FramePerfect: data/roms, config/favoritos.json e
+# config/emulator/<emulador>.
+# Links relativos, para funcionarem no host e no sandbox (/var/config). Não
+# substitui o que o usuário tiver posto lá no lugar de um link.
+atalho() {  # atalho <alvo relativo> <link>
+    mkdir -p "$(dirname "$2")"
+    if [ -L "$2" ] || [ ! -e "$2" ]; then
+        [ "$(readlink "$2")" = "$1" ] || ln -sfn "$1" "$2"
+    fi
+}
+EMU=../../../data/FramePerfect/emuladores
+atalho FramePerfect/roms "$DATA/roms"
+atalho ../data/FramePerfect/favoritos.json /var/config/favoritos.json
+for d in games presets ips localisation; do
+    atalho $EMU/arcade/config/$d /var/config/emulator/arcade/$d
+done
+# DuckStation (baixado pelo cliente na primeira vez que se joga PS1)
+for f in settings.ini gamesettings inputprofiles; do
+    atalho $EMU/ps1/$f /var/config/emulator/ps1/$f
+done
 
 case $1 in
     winecfg|regedit|taskmgr|explorer) exec wine "$@" ;;

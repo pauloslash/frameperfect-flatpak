@@ -49,6 +49,13 @@ adicionado se faltar). Os dados do app em `~/.var/app/...` não são tocados.
   mudou volta a ser link. `FP_ATUALIZAR=false` desliga;
   `FP_API_VERSAO=<url>` troca a API (para testes). Uma atualização lançada
   com o app aberto falha no updater dele e é aplicada na próxima abertura.
+- Atalhos em `~/.var/app/cc.frameperfect.FramePerfect` (recriados a cada
+  abertura): `data/roms` → `data/FramePerfect/roms`;
+  `config/favoritos.json` → `data/FramePerfect/favoritos.json`;
+  `config/emulator/arcade/{games,presets,ips,localisation}` → configs do
+  emulador de arcade;
+  `config/emulator/ps1/{settings.ini,gamesettings,inputprofiles}` → configs do
+  DuckStation (ficam quebrados até o cliente baixar o emulador de PS1).
 - Links `frameperfect://replay?...` do site: o .desktop registra
   `x-scheme-handler/frameperfect` e passa o link ao cliente (`%u`), que o
   trata como no Windows. Funciona com o app fechado ou aberto.
