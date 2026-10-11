@@ -13,8 +13,19 @@
 #   ./criar-flatpak.sh --so-gerar      só gera os arquivos do projeto (sem compilar)
 #   ./criar-flatpak.sh --sem-instalar  compila mas não instala
 #   ./criar-flatpak.sh --sem-bundle    não gera o arquivo .flatpak
+#   ./criar-flatpak.sh --publico       .flatpak sem o cliente (baixado do site na
+#                                      1ª abertura); pode ser distribuído. Não instala.
+#   ./criar-flatpak.sh --publicar      completo e publica no GitHub: apaga os releases
+#                                      antigos, cria o do código (v<versão>) e o do
+#                                      .flatpak (rascunho privado; com --publico, anexado
+#                                      ao release do código)
+#   ./criar-flatpak.sh --instalar [arquivo]
+#                                      só instala um .flatpak já gerado (padrão: o
+#                                      FramePerfect-<versão>.flatpak mais novo da pasta;
+#                                      o -publico só se não houver o completo)
 #
-# Precisa no sistema: flatpak, curl, unzip, 7z, file, python3 e o remote flathub.
+# Precisa no sistema: flatpak, curl, unzip, 7z, file, python3 e o remote flathub
+# (para --publicar também git e gh logado; para --instalar, só o flatpak).
 # O resto (org.flatpak.Builder, SDK, base Wine) é instalado pelo script.
 set -euo pipefail
 
@@ -26,7 +37,53 @@ RUNTIME_VERSION=25.08
 DIR=$(cd "$(dirname "$0")" && pwd)
 cd "$DIR"
 
-GERAR_SO=0 INSTALAR=1 BUNDLE=1
+GERAR_SO=0 INSTALAR=1 BUNDLE=1 PUBLICO=0 PUBLICAR=0
+
+# Fecha o Frame Perfect antes de instalar (senão a versão nova só vale
+# depois de reabrir)
+fechar_app() {
+    flatpak ps --columns=application 2>/dev/null | grep -qx $APP_ID || return 0
+    echo ">> Fechando o Frame Perfect"
+    flatpak kill $APP_ID 2>/dev/null
+    for _ in $(seq 20); do
+        flatpak ps --columns=application 2>/dev/null | grep -qx $APP_ID || return 0
+        sleep 0.5
+    done
+    echo "!! o Frame Perfect não fechou; feche-o e rode de novo" >&2
+    exit 1
+}
+
+# Só instala um .flatpak já gerado (--instalar). Serve para outro PC: copie o
+# .flatpak e este script e rode lá; precisa só do flatpak (o runtime e a base
+# do Wine vêm do Flathub). Os dados do app em ~/.var/app não são tocados.
+instalar_bundle() {  # instalar_bundle [arquivo]
+    command -v flatpak >/dev/null || { echo "falta o comando: flatpak" >&2; exit 1; }
+    local arq=${1:-}
+    if [ -z "$arq" ]; then
+        # O completo (com o cliente) tem preferência sobre o -publico
+        arq=$(find . -maxdepth 1 -name 'FramePerfect-*.flatpak' ! -name '*-publico.flatpak' \
+            -printf '%f\n' | sort -V | tail -1)
+        [ -n "$arq" ] || arq=$(find . -maxdepth 1 -name 'FramePerfect-*-publico.flatpak' \
+            -printf '%f\n' | sort -V | tail -1)
+        [ -n "$arq" ] || { echo "nenhum FramePerfect-*.flatpak em $DIR" >&2; exit 1; }
+    fi
+    [ -f "$arq" ] || { echo "arquivo não encontrado: $arq" >&2; exit 1; }
+    flatpak --user remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+    fechar_app
+    echo ">> Instalando $(basename "$arq")"
+    flatpak --user install -y --noninteractive --reinstall "$arq"
+    echo
+    echo "Pronto: Frame Perfect $(flatpak list --user --app --columns=application,version |
+        awk -v id="$APP_ID" '$1 == id {print $2}') instalado"
+    echo "  rodar: flatpak run $APP_ID (ou pelo menu de aplicativos)"
+    exit 0
+}
+# O arquivo é relativo à pasta de onde o script foi chamado
+if [ "${1:-}" = --instalar ]; then
+    arq=${2:-}
+    [ -z "$arq" ] || [ "${arq#/}" != "$arq" ] || arq=$OLDPWD/$arq
+    instalar_bundle "$arq"
+fi
 
 # Sem argumentos, num terminal: menu. Fora de um terminal: faz o completo.
 if [ $# -eq 0 ] && [ -t 0 ]; then
@@ -51,6 +108,20 @@ if [ $# -eq 0 ] && [ -t 0 ]; then
      Gera manifesto, lançador, .desktop, metainfo, ícones e fontes sem
      compilar. Use para conferir o que muda antes de compilar.
 
+  5) Publicar no GitHub
+     Igual ao completo e depois publica: apaga os releases antigos, cria o
+     release do código (v<versão>) e o do .flatpak em rascunho privado.
+     Precisa do gh logado e de tudo commitado e enviado (push).
+
+  6) Publicar a versão pública no GitHub
+     Gera o .flatpak sem o cliente (ele é baixado do site oficial na
+     primeira abertura), sem instalar neste PC, e publica: apaga os
+     releases antigos e cria o release do código com esse .flatpak anexado.
+
+  7) Só instalar um .flatpak já gerado
+     Instala o FramePerfect-<versão>.flatpak mais novo desta pasta, sem
+     compilar. Use em outro PC (precisa só do flatpak).
+
   0) Sair
 
 MENU
@@ -60,6 +131,9 @@ MENU
         2) BUNDLE=0 ;;
         3) INSTALAR=0 ;;
         4) GERAR_SO=1 ;;
+        5) PUBLICAR=1 ;;
+        6) PUBLICO=1 PUBLICAR=1 ;;
+        7) instalar_bundle ;;
         0) exit 0 ;;
         *) echo "opção inválida: $opcao" >&2; exit 1 ;;
     esac
@@ -72,14 +146,36 @@ for arg in "$@"; do
         --so-gerar) GERAR_SO=1 ;;
         --sem-instalar) INSTALAR=0 ;;
         --sem-bundle) BUNDLE=0 ;;
-        -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
+        --publico) PUBLICO=1 ;;
+        --publicar) PUBLICAR=1 ;;
+        -h|--help) sed -n '2,/^set -e/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
         *) echo "opção desconhecida: $arg" >&2; exit 1 ;;
     esac
 done
 
+# A versão pública não instala neste PC: trocaria a instalação atual (com o
+# cliente) por uma que baixa o cliente de novo. Teste com --instalar <arquivo>.
+[ $PUBLICO = 1 ] && INSTALAR=0
+[ $PUBLICAR = 1 ] && GERAR_SO=0 BUNDLE=1
+
 for c in flatpak curl unzip 7z python3 file; do
     command -v "$c" >/dev/null || { echo "falta o comando: $c" >&2; exit 1; }
 done
+
+# O release do código aponta para o commit atual: ele precisa estar no GitHub
+if [ $PUBLICAR = 1 ]; then
+    for c in git gh; do
+        command -v "$c" >/dev/null || { echo "falta o comando: $c" >&2; exit 1; }
+    done
+    gh auth status >/dev/null 2>&1 || { echo "o gh não está logado (gh auth login)" >&2; exit 1; }
+    if [ -n "$(git status --porcelain)" ]; then
+        echo "há mudanças não commitadas; faça commit e push antes de publicar" >&2; exit 1
+    fi
+    git fetch -q origin
+    if [ "$(git rev-parse HEAD)" != "$(git rev-parse '@{u}' 2>/dev/null)" ]; then
+        echo "o commit atual não está no GitHub; faça push (ou pull) antes de publicar" >&2; exit 1
+    fi
+fi
 
 # ---------------------------------------------------------------------------
 # 1. Descobre a versão atual e baixa o cliente completo (zip portátil Win10/11)
@@ -237,6 +333,152 @@ open(dst, 'wb').write(d)
 print(f'{src} -> {dst}: {trocas} ligadura(s) desligada(s)')
 EOF
 
+# Confere, depois do build, se algum símbolo do cliente ficou sem fonte
+cat > scripts/verificar-fontes.py <<'EOF'
+#!/usr/bin/env python3
+# Gerado por criar-flatpak.sh.
+# uso: verificar-fontes.py <FramePerfect.exe> <PresentationCore.dll> <fontes.reg> <fonte.ttf>...
+#
+# Avisa sobre símbolos do cliente que vão aparecer como quadrado (ou sumir)
+# no Wine. Pega os textos do exe (#US e BAML) e, para cada símbolo, faz o que
+# o WPF faz: tenta a Segoe UI e, se ela não tiver, o mapa de fallback da
+# "Global User Interface" do Wine Mono (faixa Unicode -> lista de famílias).
+# Os nomes passam pelas Replacements do fontes.reg e só contam as fontes
+# passadas (as que o lançador põe no C:\windows\Fonts). Só avisa: a correção
+# (outra fonte, outro mapeamento no fontes.reg) é decidida à mão.
+import re, struct, sys, unicodedata
+
+exe, dll, reg, *fontes = sys.argv[1:]
+PRIMARIA = 'Segoe UI'
+CATEGORIAS = ('So', 'Sm', 'Sk', 'Pd', 'Po', 'Pi', 'Pf', 'Ps', 'Pe', 'No')
+
+
+def tabelas(d):
+    n = struct.unpack_from('>H', d, 4)[0]
+    return {d[12+16*i:16+16*i]: struct.unpack_from('>I', d, 20+16*i)[0] for i in range(n)}
+
+
+def caracteres(d, t):
+    c, cps = t[b'cmap'], set()
+    for i in range(struct.unpack_from('>H', d, c+2)[0]):
+        s = c + struct.unpack_from('>I', d, c+8+8*i)[0]
+        fmt = struct.unpack_from('>H', d, s)[0]
+        if fmt == 12:
+            for k in range(struct.unpack_from('>I', d, s+12)[0]):
+                a, b, _ = struct.unpack_from('>III', d, s+16+12*k)
+                cps.update(range(a, b+1))
+        elif fmt == 4:
+            seg = struct.unpack_from('>H', d, s+6)[0] // 2
+            for k in range(seg):
+                fim = struct.unpack_from('>H', d, s+14+2*k)[0]
+                ini = struct.unpack_from('>H', d, s+16+2*seg+2*k)[0]
+                cps.update(range(ini, fim+1))
+    cps.discard(0xFFFF)
+    return cps
+
+
+def familias(d, t):
+    base = t[b'name']
+    cnt, soff = struct.unpack_from('>HH', d, base+2)
+    nomes = set()
+    for k in range(cnt):
+        pid, _, _, nid, ln, o = struct.unpack_from('>6H', d, base+6+12*k)
+        if pid == 3 and nid in (1, 16):
+            nomes.add(d[base+soff+o:base+soff+o+ln].decode('utf-16-be'))
+    return nomes
+
+
+cobertura = {}  # família -> caracteres
+for f in fontes:
+    d = open(f, 'rb').read()
+    t = tabelas(d)
+    for nome in familias(d, t):
+        cobertura.setdefault(nome.lower(), set()).update(caracteres(d, t))
+
+troca = {}
+txt = open(reg, encoding='utf-8', errors='replace').read()
+if 'Replacements]' in txt:
+    for de, para in re.findall(r'^"([^"]+)"="([^"]+)"', txt.split('Replacements]', 1)[1], re.M):
+        troca[de.lower()] = para
+
+
+def tem(familia, cp):
+    real = troca.get(familia.lower(), familia)
+    return real, cp in cobertura.get(real.lower(), ())
+
+
+# Mapa de fallback: a "Global User Interface" do Windows 10 RS5 (a que o Wine Mono usa)
+d = open(dll, 'rb').read().decode('utf-8', 'replace')
+blocos = re.findall(r'<FontFamily\s+xmlns=.*?</FontFamily>', d, re.S)
+gui = [b for b in blocos if 'Global User Interface' in b]
+gui = next((b for b in gui if 'OS="Windows10RS5"' in b), gui[0] if gui else '')
+gui = re.sub(r'<!--.*?-->', '', gui, flags=re.S)
+mapas = []
+for m in re.findall(r'<FontFamilyMap\b(.*?)/>', gui, re.S):
+    attr = dict(re.findall(r'(\w+)\s*=\s*"([^"]*)"', m))
+    if attr.get('Language') and not attr['Language'].lower().startswith('pt'):
+        continue
+    faixas = []
+    for r in attr.get('Unicode', '').split(','):
+        a, _, b = r.strip().partition('-')
+        if a:
+            faixas.append((int(a, 16), int(b or a, 16)))
+    mapas.append((faixas, [x.strip() for x in attr.get('Target', '').split(',') if x.strip()]))
+if not mapas:
+    print('!! verificar-fontes: mapa de fallback do WPF não encontrado em', dll)
+    sys.exit(0)
+
+# Textos do cliente: #US (strings do código, UTF-16) e BAML (XAML, UTF-8)
+d = open(exe, 'rb').read()
+textos = []
+i = d.find(b'BSJB')
+if i >= 0:
+    p = i + 16 + struct.unpack_from('<I', d, i+12)[0] + 2
+    n = struct.unpack_from('<H', d, p)[0]; p += 2
+    for _ in range(n):
+        off, tam = struct.unpack_from('<II', d, p); p += 8
+        e = d.index(b'\0', p); nome = d[p:e]; p = (e + 4) & ~3
+        if nome == b'#US':
+            q, fim = i + off + 1, i + off + tam
+            while q < fim:
+                b = d[q]
+                if b & 0x80 == 0: L = b; q += 1
+                elif b & 0xC0 == 0x80: L = ((b & 0x3f) << 8) | d[q+1]; q += 2
+                else: L = ((b & 0x1f) << 24) | (d[q+1] << 16) | (d[q+2] << 8) | d[q+3]; q += 4
+                if L > 1:
+                    textos.append(d[q:q+L-1].decode('utf-16le', 'replace'))
+                q += L
+for m in re.finditer(rb'(?:[\x20-\x7e]|[\xc2-\xdf][\x80-\xbf]|[\xe0-\xef][\x80-\xbf]{2}|[\xf0-\xf4][\x80-\xbf]{3}){4,}', d):
+    t = m.group().decode('utf-8', 'ignore')
+    if re.search(r'[A-Za-z]{3}', t):
+        textos.append(t)
+
+simbolos = {}
+for t in textos:
+    for c in t:
+        if ord(c) > 0x7f and unicodedata.category(c) in CATEGORIAS:
+            simbolos.setdefault(c, t.strip())
+
+faltando = 0
+for c, ctx in sorted(simbolos.items()):
+    cp = ord(c)
+    if tem(PRIMARIA, cp)[1]:
+        continue
+    alvos = next((a for faixas, a in mapas if any(x <= cp <= y for x, y in faixas)), [])
+    tentou = []
+    for f in alvos:
+        real, ok = tem(f, cp)
+        if ok:
+            break
+        tentou.append(f if real == f else f'{f} -> {real}')
+    else:
+        faltando += 1
+        print(f'!! sem fonte para {c} (U+{cp:04X}) em "{ctx[:60]}"')
+        print(f'   o WPF tenta {PRIMARIA} -> {tem(PRIMARIA, cp)[0]}, ' +
+              (', '.join(tentou) if tentou else 'nenhuma família no mapa de fallback'))
+print(f'>> Fontes: {len(simbolos)} símbolos do cliente conferidos, {faltando} sem fonte')
+EOF
+
 cat > fontes.reg <<'EOF'
 REGEDIT4
 
@@ -304,6 +546,9 @@ cat > scripts/frameperfect.sh <<'EOF'
 # (~/.var/app/cc.frameperfect.FramePerfect/data/FramePerfect no host). Os
 # arquivos que ele só lê (exe, dll, recursos.dat...) ficam lá como links para
 # /app/frameperfect; o resto (configs, savestates, NVRAM) é cópia de verdade.
+# Na versão pública (criar-flatpak.sh --publico) o pacote não traz o cliente:
+# ele é baixado do site oficial na primeira abertura para /var/data/cliente,
+# que faz o papel do /app/frameperfect.
 #
 # Subcomandos para depuração:
 #   flatpak run cc.frameperfect.FramePerfect winecfg|regedit|winetricks ...|shell
@@ -312,6 +557,8 @@ SEMENTE=/app/frameperfect
 DATA=/var/data
 JOGO=$DATA/FramePerfect
 API_VERSAO=${FP_API_VERSAO:-https://frameperfect.cc/api/app/version/}
+PUBLICO=@PUBLICO@
+[ $PUBLICO = 1 ] && SEMENTE=$DATA/cliente
 
 export WINEPREFIX=$DATA/wineprefix
 export WINEARCH=win64
@@ -389,6 +636,34 @@ elif [ "${USE_DXVK:-false}" != true ] && [ -f "$WINEPREFIX/.fp-dxvk" ]; then
     rm -f "$WINEPREFIX/.fp-dxvk"
 fi
 
+# --- Versão pública: baixa o cliente completo na primeira abertura ---
+if [ $PUBLICO = 1 ] && [ ! -f "$SEMENTE/FramePerfect.exe" ]; then
+    INFO=$(curl -fsS --max-time 15 "$API_VERSAO" 2>/dev/null | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+print(d["latest_version"], d["full_download_url"], d["full_file_size_bytes"])' 2>/dev/null)
+    URL=$(echo "$INFO" | cut -d' ' -f2)
+    TAM=$(echo "$INFO" | cut -d' ' -f3)
+    ZIP=$DATA/.fp-cliente.zip
+    # O zip completo não tem SHA-256 na API: confere o tamanho, e o
+    # atualizar.py confere o CRC de cada arquivo ao extrair
+    if [ -n "$INFO" ] &&
+       com_progresso "Baixando o Frame Perfect ${INFO%% *} do site oficial..." \
+           curl -fsSL -o "$ZIP" "$URL" &&
+       [ "$(stat -c %s "$ZIP")" = "$TAM" ]; then
+        rm -rf "$SEMENTE.novo"
+        python3 /app/share/frameperfect/atualizar.py "$ZIP" "$SEMENTE.novo" >/dev/null &&
+            rm -rf "$SEMENTE" && mv "$SEMENTE.novo" "$SEMENTE"
+    fi
+    rm -rf "$ZIP" "$SEMENTE.novo"
+    if [ ! -f "$SEMENTE/FramePerfect.exe" ]; then
+        MSG="Não foi possível baixar o Frame Perfect de frameperfect.cc. Confira a conexão e abra de novo."
+        echo "$MSG" >&2
+        command -v zenity >/dev/null && zenity --error --title="Frame Perfect" --text="$MSG" 2>/dev/null
+        exit 1
+    fi
+fi
+
 # --- Cliente ---
 # Arquivos que o cliente só lê viram links para a semente em /app (não ocupam
 # espaço de novo e acompanham as atualizações do Flatpak). Por causa dos links
@@ -420,17 +695,23 @@ mais_nova() {  # mais_nova A B: verdadeiro se a versão A for maior que a B
 }
 
 # Instala na primeira vez (ou se a pasta foi apagada) e atualiza se o Flatpak
-# trouxer versão mais nova que a instalada. A config do launcher (login) e os
-# arquivos do usuário (ROMs, configs, logs) não são tocados.
+# trouxer versão mais nova que a instalada. A config do launcher (login), as
+# configs dos emuladores (emuladores/*/config: só os arquivos que faltam) e os
+# arquivos do usuário (ROMs, logs) não são sobrescritos.
 V_SEMENTE=$(versao "$SEMENTE")
 V_JOGO=$(versao "$JOGO")
 if [ ! -f "$JOGO/FramePerfect.exe" ] || mais_nova "$V_SEMENTE" "$V_JOGO"; then
     echo "Instalando o Frame Perfect $V_SEMENTE em $JOGO (havia: ${V_JOGO:-nada})"
     mkdir -p "$JOGO"
     imutaveis > "$DATA/.fp-imutaveis"
-    (cd "$SEMENTE" && tar cf - -X "$DATA/.fp-imutaveis" --exclude=./rbf-launcher.json .) |
-        (cd "$JOGO" && tar xf - --no-same-owner)
+    (cd "$SEMENTE" && tar cf - -X "$DATA/.fp-imutaveis" --exclude=./rbf-launcher.json \
+        --exclude='./emuladores/*/config' .) | (cd "$JOGO" && tar xf - --no-same-owner)
     rm -f "$DATA/.fp-imutaveis"
+    for d in "$SEMENTE"/emuladores/*/config; do
+        [ -d "$d" ] || continue
+        mkdir -p "$JOGO/${d#"$SEMENTE"/}"
+        cp -r --update=none "$d/." "$JOGO/${d#"$SEMENTE"/}/"
+    done
     chmod -R u+w "$JOGO"
     ligar forcar
     V_JOGO=$V_SEMENTE
@@ -452,6 +733,12 @@ print(d["latest_version"], d["download_url"], d["sha256"].lower())' 2>/dev/null)
                curl -fsSL -o "$PACOTE" "$URL" &&
            echo "$SHA  $PACOTE" | sha256sum -c --status; then
             echo "Atualizando o Frame Perfect para $NOVA"
+            # Na versão pública a semente também é atualizada (ela é gravável),
+            # para continuar servindo de base para os links e a recuperação
+            if [ $PUBLICO = 1 ]; then
+                python3 /app/share/frameperfect/atualizar.py "$PACOTE" "$SEMENTE" &&
+                    V_SEMENTE=$(versao "$SEMENTE")
+            fi
             # rm .fp-links: o que não mudou entre as versões volta a ser link
             python3 /app/share/frameperfect/atualizar.py "$PACOTE" "$JOGO" &&
                 V_JOGO=$(versao "$JOGO") && rm -f "$JOGO/.fp-links"
@@ -511,6 +798,7 @@ wine "$JOGO/FramePerfect.exe" "$@"
 # processos do Wine terminarem para o sandbox não ser encerrado no meio
 wineserver -w
 EOF
+sed -i "s/@PUBLICO@/$PUBLICO/" scripts/frameperfect.sh
 chmod +x scripts/frameperfect.sh
 
 # ---------------------------------------------------------------------------
@@ -565,6 +853,13 @@ EOF
 # ---------------------------------------------------------------------------
 # 5. Manifesto
 # ---------------------------------------------------------------------------
+# Versão pública: o cliente não entra no pacote (o lançador baixa)
+CLIENTE_CMDS="" CLIENTE_SRCS=""
+if [ $PUBLICO = 0 ]; then
+    CLIENTE_CMDS="      - mkdir -p /app/frameperfect"$'\n'"      - cp -a cliente/. /app/frameperfect/"$'\n'
+    CLIENTE_SRCS="      - type: archive"$'\n'"        path: $ZIP"$'\n'"        sha256: $ZIP_SHA"$'\n'"        dest: cliente"$'\n'
+fi
+
 ICONES_CMDS=""
 ICONES_SRCS=""
 for f in icons/*.png; do
@@ -610,9 +905,7 @@ modules:
   - name: frameperfect
     buildsystem: simple
     build-commands:
-      - mkdir -p /app/frameperfect
-      - cp -a cliente/. /app/frameperfect/
-      - install -Dm755 frameperfect.sh /app/bin/frameperfect
+${CLIENTE_CMDS}      - install -Dm755 frameperfect.sh /app/bin/frameperfect
       - install -Dm644 atualizar.py /app/share/frameperfect/atualizar.py
       - mkdir -p /app/share/frameperfect/fontes
       - python3 fontes.py NotoEmoji.ttf /app/share/frameperfect/fontes/NotoEmoji.ttf --notdef-vazio
@@ -624,11 +917,7 @@ modules:
       - install -Dm644 $APP_ID.desktop /app/share/applications/$APP_ID.desktop
       - install -Dm644 $APP_ID.metainfo.xml /app/share/metainfo/$APP_ID.metainfo.xml
 ${ICONES_CMDS}    sources:
-      - type: archive
-        path: $ZIP
-        sha256: $ZIP_SHA
-        dest: cliente
-      - type: file
+${CLIENTE_SRCS}      - type: file
         path: scripts/frameperfect.sh
       - type: file
         path: $NOTO_EMOJI
@@ -646,7 +935,7 @@ ${BARLOW_SRCS}      - type: file
 ${ICONES_SRCS}
 EOF
 
-echo ">> Arquivos gerados para a versão $VERSAO"
+echo ">> Arquivos gerados para a versão $VERSAO$([ $PUBLICO = 1 ] && echo ' (pública)')"
 [ $GERAR_SO = 1 ] && exit 0
 
 # ---------------------------------------------------------------------------
@@ -661,9 +950,18 @@ flatpak install -y --noninteractive --user flathub \
     org.freedesktop.Platform.GL32.default//$RUNTIME_VERSION \
     org.winehq.Wine//$WINE_BASE_VERSION
 
+# A versão pública vai para outro repo: o remote frameperfect-local (o repo/)
+# é de onde a instalação deste PC se atualiza
+REPO=repo
+ARQ=FramePerfect-$VERSAO.flatpak
+if [ $PUBLICO = 1 ]; then
+    REPO=repo-publico
+    ARQ=FramePerfect-$VERSAO-publico.flatpak
+fi
+
 # Sem --install: instalando de dentro do sandbox do Builder, o .desktop
 # exportado ganha Exec=/app/bin/flatpak (caminho do Builder) e some do menu
-BUILDER_ARGS=(--force-clean --user --repo=repo --disable-rofiles-fuse)
+BUILDER_ARGS=(--force-clean --user --repo=$REPO --disable-rofiles-fuse)
 
 echo ">> Compilando"
 # O Builder repassa o XDG_DATA_HOME do sandbox dele para o "flatpak" do host,
@@ -686,27 +984,150 @@ done
 # 300 GB) e o export falha com "min-free-space-percent would be exceeded".
 # Usa o mesmo limite fixo da instalação --user do flatpak (500MB).
 flatpak run --filesystem="$DIR" --cwd="$DIR" --command=ostree org.flatpak.Builder \
-    init --repo=repo --mode=archive-z2
+    init --repo=$REPO --mode=archive-z2
 flatpak run --filesystem="$DIR" --cwd="$DIR" --command=ostree org.flatpak.Builder \
-    config --repo=repo set core.min-free-space-size 500MB
+    config --repo=$REPO set core.min-free-space-size 500MB
 # --filesystem: o sandbox do Builder não enxerga pastas fora da home (ex.: /tmp)
 flatpak run --filesystem="$DIR" --cwd="$DIR" --command=flatpak-builder org.flatpak.Builder \
     "${BUILDER_ARGS[@]}" build-dir $APP_ID.yml
 
+# Símbolos do cliente sem fonte no Wine (só avisa; ver scripts/verificar-fontes.py).
+# Usa as fontes que o lançador copia para o prefixo: as do build e as do runtime.
+MONO=$(flatpak info --show-location org.winehq.Wine.mono//$WINE_BASE_VERSION 2>/dev/null)
+PLATAFORMA=$(flatpak info --show-location org.freedesktop.Platform//$RUNTIME_VERSION 2>/dev/null)
+DLL=$(find "${MONO:-/nada}/files" -name PresentationCore.dll 2>/dev/null | head -1)
+if [ -n "$DLL" ] && [ -n "$PLATAFORMA" ]; then
+    mapfile -t FONTES < <(find "$PLATAFORMA/files/share/fonts" \( -name DejaVuSans.ttf \
+        -o -name 'LiberationSans-*.ttf' -o -name 'LiberationMono-*.ttf' \))
+    python3 -I scripts/verificar-fontes.py "$TMP/FramePerfect.exe" "$DLL" fontes.reg \
+        "${FONTES[@]}" build-dir/files/share/frameperfect/fontes/*.ttf
+else
+    echo "!! verificação de fontes pulada: Wine Mono ou runtime não encontrado" >&2
+fi
+
 if [ $INSTALAR = 1 ]; then
+    fechar_app
     echo ">> Instalando (--user) a partir do repo local"
     flatpak --user remote-add --if-not-exists --no-gpg-verify frameperfect-local "$DIR/repo"
     flatpak --user install -y --noninteractive --reinstall frameperfect-local $APP_ID
 fi
 
 if [ $BUNDLE = 1 ]; then
-    echo ">> Gerando FramePerfect-$VERSAO.flatpak"
-    flatpak build-bundle repo "FramePerfect-$VERSAO.flatpak" $APP_ID \
+    echo ">> Gerando $ARQ"
+    flatpak build-bundle $REPO "$ARQ" $APP_ID \
         --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo
 fi
 
+# ---------------------------------------------------------------------------
+# 7. Publica no GitHub (--publicar): apaga todos os releases e cria os novos
+# ---------------------------------------------------------------------------
+if [ $PUBLICAR = 1 ]; then
+    COMMIT=$(git rev-parse HEAD)
+    SHA=$(sha256sum "$ARQ" | cut -d' ' -f1)
+    REPO_GH=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+    preencher() {  # troca os @CAMPOS@ das notas
+        sed -e "s|@VERSAO@|$VERSAO|g" -e "s|@COMMIT@|${COMMIT:0:7}|g" -e "s|@SHA@|$SHA|g" \
+            -e "s|@ARQ@|$ARQ|g" -e "s|@REPO@|$REPO_GH|g"
+    }
+
+    echo ">> Apagando os releases antigos"
+    gh release list --limit 1000 --json tagName,isDraft -q '.[] | "\(.tagName) \(.isDraft)"' |
+        while read -r tag rascunho; do
+            echo "   $tag"
+            if [ "$rascunho" = true ]; then  # rascunho não tem tag
+                gh release delete "$tag" --yes </dev/null
+            else
+                gh release delete "$tag" --yes --cleanup-tag </dev/null
+                git tag -d "$tag" >/dev/null 2>&1 || true
+            fi
+        done
+
+    {
+        cat <<'NOTAS'
+Flatpak do [Frame Perfect](https://frameperfect.cc) rodando o cliente de Windows (10/11) no Wine, no mesmo modelo do [com.fightcade.Fightcade](https://github.com/flathub/com.fightcade.Fightcade) do Flathub. Testado com o cliente **@VERSAO@**.
+
+NOTAS
+        if [ $PUBLICO = 1 ]; then
+            cat <<'NOTAS'
+### Instalar o .flatpak pronto
+
+O `@ARQ@` não contém o cliente do Frame Perfect (que é proprietário): na primeira abertura ele baixa o cliente oficial de frameperfect.cc (~150 MB).
+
+```sh
+git clone https://github.com/@REPO@.git
+cd frameperfect-flatpak
+gh release download v@VERSAO@ -p '*.flatpak'   # ou baixe o arquivo abaixo
+./criar-flatpak.sh --instalar @ARQ@
+flatpak run cc.frameperfect.FramePerfect
+```
+
+SHA-256: `@SHA@`
+
+### Ou gerar na sua máquina
+NOTAS
+        else
+            cat <<'NOTAS'
+Esta release não traz o `.flatpak` pronto: o cliente do Frame Perfect é proprietário, então o script baixa o cliente oficial do site e gera o pacote na sua máquina.
+
+### Como gerar e instalar
+NOTAS
+        fi
+        cat <<'NOTAS'
+
+```sh
+git clone https://github.com/@REPO@.git
+cd frameperfect-flatpak
+./criar-flatpak.sh          # menu: escolha 1 (completo) ou 2 (compilar e instalar)
+flatpak run cc.frameperfect.FramePerfect
+```
+
+Precisa de `flatpak` (com o Flathub), `curl`, `unzip`, `7z`, `file` e `python3`. O script instala o resto (org.flatpak.Builder, SDK 25.08 e a base org.winehq.Wine stable-25.08).
+
+Para levar a outro PC: gere o `.flatpak` (opção 1 ou 3 do menu) e instale lá com `./criar-flatpak.sh --instalar` (precisa só do `flatpak`).
+
+### O que tem
+
+- Cliente WPF rodando com Wine 11 + Wine Mono, sem precisar do .NET da Microsoft
+- Fontes corrigidas: sem quadrados no lugar de símbolos, emojis e ligaduras (fi, fl)
+- Links `frameperfect://replay?...` do site abrem o app
+- Atalhos em `~/.var/app/cc.frameperfect.FramePerfect` para as ROMs (`data/roms`), os favoritos (`config/favoritos.json`) e as configs dos emuladores (`config/emulator/arcade/{games,presets,ips,localisation}` e do DuckStation em `config/emulator/ps1`)
+- O cliente roda em `~/.var/app/cc.frameperfect.FramePerfect` com links para os arquivos estáticos; as atualizações do cliente são aplicadas pelo lançador, e os dados apagados são recriados ao abrir
+
+Detalhes no [README](https://github.com/@REPO@#readme).
+NOTAS
+    } | preencher > "$TMP/notas-codigo.md"
+
+    echo ">> Publicando o release v$VERSAO"
+    if [ $PUBLICO = 1 ]; then
+        gh release create "v$VERSAO" --target "$COMMIT" --latest \
+            --title "Frame Perfect $VERSAO" --notes-file "$TMP/notas-codigo.md" "$ARQ"
+    else
+        gh release create "v$VERSAO" --target "$COMMIT" --latest \
+            --title "Frame Perfect $VERSAO" --notes-file "$TMP/notas-codigo.md"
+        # Contém o cliente proprietário: só em rascunho (visível para quem
+        # tem acesso de escrita ao repositório)
+        preencher > "$TMP/notas-flatpak.md" <<'NOTAS'
+**Rascunho privado: não publicar.** Contém o cliente proprietário do Frame Perfect; rascunhos só ficam visíveis para quem tem acesso de escrita ao repositório.
+
+`@ARQ@`, gerado pelo `criar-flatpak.sh` do commit @COMMIT@ (cliente @VERSAO@).
+SHA-256: `@SHA@`
+
+Baixar (precisa estar logado no `gh`):
+
+```sh
+gh release download flatpak-@VERSAO@ -R @REPO@ -p '*.flatpak'
+./criar-flatpak.sh --instalar
+```
+NOTAS
+        echo ">> Publicando o .flatpak em rascunho (flatpak-$VERSAO)"
+        gh release create "flatpak-$VERSAO" --draft --target "$COMMIT" \
+            --title "$ARQ (privado)" --notes-file "$TMP/notas-flatpak.md" "$ARQ"
+    fi
+fi
+
 echo
-echo "Pronto: Frame Perfect $VERSAO"
+echo "Pronto: Frame Perfect $VERSAO$([ $PUBLICO = 1 ] && echo ' (versão pública: o cliente é baixado na 1ª abertura)')"
 [ $INSTALAR = 1 ] && echo "  rodar:   flatpak run $APP_ID"
-[ $BUNDLE = 1 ] && echo "  bundle:  $DIR/FramePerfect-$VERSAO.flatpak (flatpak install --user FramePerfect-$VERSAO.flatpak)"
+[ $BUNDLE = 1 ] && echo "  bundle:  $DIR/$ARQ (./criar-flatpak.sh --instalar $ARQ)"
+[ $PUBLICAR = 1 ] && echo "  github:  https://github.com/$REPO_GH/releases"
 exit 0

@@ -2,6 +2,7 @@
 downloads/
 build-dir/
 repo/
+repo-publico/
 .flatpak-builder/
 *.flatpak
 

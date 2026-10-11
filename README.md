@@ -12,7 +12,8 @@ metainfo, os ícones e o `fontes.reg`, e compila. Para mudar o pacote, mude o
 script e rode-o de novo; os arquivos gerados são sobrescritos.
 
 Precisa no sistema: `flatpak` (com o remote flathub), `curl`, `unzip`, `7z`,
-`file` e `python3`, além de internet.
+`file` e `python3`, além de internet (para `--publicar`, também `git` e o `gh`
+logado).
 
 ```sh
 ./criar-flatpak.sh                 # menu com as opções abaixo, explicadas
@@ -20,13 +21,47 @@ Precisa no sistema: `flatpak` (com o remote flathub), `curl`, `unzip`, `7z`,
 ./criar-flatpak.sh --so-gerar      # só gera os arquivos
 ./criar-flatpak.sh --sem-instalar  # compila sem instalar
 ./criar-flatpak.sh --sem-bundle    # não gera o .flatpak
-./instalar-flatpak.sh              # instala o FramePerfect-<versão>.flatpak mais novo da pasta
+./criar-flatpak.sh --publico       # .flatpak sem o cliente (FramePerfect-<versão>-publico.flatpak); não instala
+./criar-flatpak.sh --publicar      # completo + publica os releases no GitHub (opções 5 e 6 do menu)
+./criar-flatpak.sh --instalar      # só instala o FramePerfect-<versão>.flatpak mais novo da pasta (opção 7)
 flatpak run cc.frameperfect.FramePerfect
 ```
 
 Para instalar em outro PC, copie o `FramePerfect-<versão>.flatpak` junto com o
-`instalar-flatpak.sh` e rode o script lá (precisa só do `flatpak`; o Flathub é
-adicionado se faltar). Os dados do app em `~/.var/app/...` não são tocados.
+`criar-flatpak.sh` e rode `./criar-flatpak.sh --instalar` lá (precisa só do
+`flatpak`; o Flathub é adicionado se faltar). Os dados do app em
+`~/.var/app/...` não são tocados. O script fecha o Frame Perfect antes de
+instalar, se estiver aberto.
+
+### Versão pública
+
+O `.flatpak` normal contém o cliente, que é proprietário, por isso só é
+publicado em rascunho privado. Com `--publico` o pacote sai sem o cliente
+(~80 MB em vez de ~220 MB) e pode ser distribuído: na primeira abertura o
+lançador baixa o zip completo do site oficial (`full_download_url` da API,
+conferido pelo tamanho e pelo CRC de cada arquivo) para
+`~/.var/app/cc.frameperfect.FramePerfect/data/cliente`, que faz o papel do
+`/app/frameperfect`, e as atualizações são aplicadas nele e na pasta do
+cliente. Sem internet na primeira abertura, o app avisa e fecha. Ele vai para
+outro repo local (`repo-publico/`) e não é instalado neste PC (trocaria a
+instalação atual); teste com `./criar-flatpak.sh --instalar FramePerfect-<versão>-publico.flatpak`.
+
+Não usa `extra-data` (download na instalação, o mecanismo do Flathub) porque
+ele exige URL e SHA-256 fixos, e o site só mantém a versão atual: o zip
+completo não tem versão na URL e o pacote versionado antigo some. O
+`.flatpak` pararia de instalar a cada versão nova do cliente.
+
+### Publicar no GitHub
+
+`--publicar` (opções 5 e 6 do menu) faz o completo e depois apaga **todos**
+os releases do repositório (e as tags) e cria:
+
+- `v<versão>`: release do código, apontando para o commit atual;
+- o `.flatpak`: no normal, em rascunho privado `flatpak-<versão>` (só quem tem
+  acesso de escrita vê); com `--publico`, anexado ao próprio `v<versão>`.
+
+Exige tudo commitado e o commit atual no GitHub (push), e confere isso antes
+de baixar ou compilar.
 
 ## Como funciona
 
@@ -41,7 +76,10 @@ adicionado se faltar). Os dados do app em `~/.var/app/...` não são tocados.
   (`rbf-launcher.json`), ROMs, replays e logs existem só lá.
 - Recuperação: a cada abertura o lançador recria o que tiver sido apagado em
   `.../data/FramePerfect` a partir do `/app` (sem sobrescrever nada); se a
-  pasta inteira sumir, ela é reinstalada (sem login, sem ROMs).
+  pasta inteira sumir, ela é reinstalada (sem login, sem ROMs). Quando o
+  Flatpak traz uma versão mais nova, os arquivos são copiados de novo, mas o
+  login e as configs dos emuladores (`emuladores/*/config`) não são
+  sobrescritos: só os arquivos que faltam são copiados.
 - Atualizações do cliente: o `updater.exe` dele não funciona com os links
   (grava por cima do arquivo, e o link aponta para o `/app`). O lançador
   consulta a API antes de abrir o cliente e, se houver versão nova, baixa o
@@ -76,7 +114,18 @@ adicionado se faltar). Os dados do app em `~/.var/app/...` não são tocados.
   Barlow embutida no exe tem ligadura). O executável do cliente não é
   alterado. Resta um quadradinho extra por emoji (ex.: busca "🔍"), limitação
   do Wine Mono. Para reaplicar as fontes num prefixo existente, mude
-  `FONTES_VERSAO` no lançador.
+  `FONTES_VERSAO` no lançador. Para U+27C0-2BFF (ex.: o ⭕ de "🅱️ / ⭕ / Esc
+  voltar") o WPF tenta Segoe UI Symbol e depois Cambria Math, por isso
+  Cambria Math → Noto Emoji.
+- Verificação de fontes: a cada build, `scripts/verificar-fontes.py` lê os
+  textos do `FramePerfect.exe` (strings do código e do XAML) e, para cada
+  símbolo, refaz a escolha de fonte do WPF: a Segoe UI e depois o mapa de
+  fallback "Global User Interface" do `PresentationCore.dll` do Wine Mono
+  (faixa Unicode → famílias), com as trocas do `fontes.reg` e só as fontes que
+  o lançador põe no prefixo. Ela só avisa (`!! sem fonte para ...`, com as
+  famílias tentadas); a correção (outra fonte ou outro mapeamento) é à mão.
+  Atualizações do cliente aplicadas pelo lançador não passam por ela; a
+  próxima compilação, que baixa a versão nova, confere.
 - DXVK: desligado; ative com `flatpak override --user --env=USE_DXVK=true cc.frameperfect.FramePerfect`.
 - Depuração: `flatpak run cc.frameperfect.FramePerfect winecfg|regedit|winetricks ...|shell`;
   logs do cliente em `.../data/FramePerfect/rbf-launcher.log`.
