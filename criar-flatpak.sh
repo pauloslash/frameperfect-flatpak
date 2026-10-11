@@ -1051,7 +1051,7 @@ if [ $PUBLICAR = 1 ]; then
     enviar() {  # enviar <tag> <arquivo>
         local n
         for n in 1 2 3; do
-            timeout 900 gh release upload "$1" "$2" --clobber && return 0
+            timeout 420 gh release upload "$1" "$2" --clobber && return 0
             echo "!! envio de $2 falhou (tentativa $n de 3)" >&2
         done
         exit 1
