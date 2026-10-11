@@ -15,9 +15,9 @@
 #   ./criar-flatpak.sh --sem-bundle    não gera o arquivo .flatpak
 #   ./criar-flatpak.sh --publico       .flatpak sem o cliente (baixado do site na
 #                                      1ª abertura); pode ser distribuído. Não instala.
-#   ./criar-flatpak.sh --publicar      completo e publica no GitHub: substitui o release
-#                                      do código (v<versão>) e o do .flatpak: o -full em
-#                                      rascunho privado; com --publico, o público. Um não
+#   ./criar-flatpak.sh --publicar      completo e publica no GitHub o -full em rascunho
+#                                      privado; com --publico, o release do código
+#                                      (v<versão>) com o .flatpak público anexado. Um não
 #                                      apaga o outro.
 #   ./criar-flatpak.sh --instalar [arquivo]
 #                                      só instala um .flatpak já gerado (padrão: o
@@ -109,16 +109,16 @@ if [ $# -eq 0 ] && [ -t 0 ]; then
      compilar. Use para conferir o que muda antes de compilar.
 
   5) Publicar no GitHub
-     Igual ao completo e depois publica: substitui o release do código
-     (v<versão>) e o do .flatpak -full, em rascunho privado. O público
-     (opção 6) não é apagado.
+     Igual ao completo e depois publica o .flatpak -full em rascunho
+     privado (substitui o anterior). O release do código, com o público
+     (opção 6), não é apagado; só é criado se não existir.
      Precisa do gh logado e de tudo commitado e enviado (push).
 
   6) Publicar a versão pública no GitHub
      Gera o .flatpak sem o cliente (ele é baixado do site oficial na
      primeira abertura), sem instalar neste PC, e publica: substitui o
-     release do código e o do .flatpak público. O -full (opção 5) não é
-     apagado.
+     release do código (v<versão>), com esse .flatpak anexado. O -full
+     (opção 5) não é apagado.
 
   7) Só instalar um .flatpak já gerado
      Instala o FramePerfect-<versão>-full.flatpak mais novo desta pasta, sem
@@ -1022,11 +1022,11 @@ if [ $BUNDLE = 1 ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 7. Publica no GitHub (--publicar). São três releases, cada um substituído
-#    só pelo do mesmo tipo, para os três poderem existir juntos:
-#    - v<versão>: o código (o "latest"), recriado em toda publicação;
-#    - flatpak-full-<versão>: rascunho privado com o -full (opção 5);
-#    - flatpak-<versão>: o .flatpak público (opção 6).
+# 7. Publica no GitHub (--publicar). São dois releases:
+#    - v<versão>: o código (o "latest") com o .flatpak público anexado.
+#      Substituído pela opção 6; a opção 5 só o cria se não houver nenhum
+#      (sem o anexo), para não apagar o público;
+#    - flatpak-full-<versão>: rascunho privado com o -full (opção 5).
 # ---------------------------------------------------------------------------
 if [ $PUBLICAR = 1 ]; then
     COMMIT=$(git rev-parse HEAD)
@@ -1034,20 +1034,33 @@ if [ $PUBLICAR = 1 ]; then
     REPO_GH=$(gh repo view --json nameWithOwner -q .nameWithOwner)
     preencher() {  # troca os @CAMPOS@ das notas
         sed -e "s|@VERSAO@|$VERSAO|g" -e "s|@COMMIT@|${COMMIT:0:7}|g" -e "s|@SHA@|$SHA|g" \
-            -e "s|@ARQ@|$ARQ|g" -e "s|@REPO@|$REPO_GH|g" -e "s|@PUBLICO_URL@|${PUBLICO_URL:-}|g"
+            -e "s|@ARQ@|$ARQ|g" -e "s|@REPO@|$REPO_GH|g"
     }
     tipo() {  # tipo <tag> <rascunho>: codigo, full ou publico
         case $1 in
             v[0-9]*) echo codigo ;;
             flatpak-full-*) echo full ;;
-            flatpak-*) [ "$2" = true ] && echo full || echo publico ;;  # rascunho antigo = full
+            flatpak-*) [ "$2" = true ] && echo full || echo publico ;;  # formatos antigos
             *) echo outro ;;
         esac
     }
-    MEU_TIPO=full
-    [ $PUBLICO = 1 ] && MEU_TIPO=publico
-    # O upload do .flatpak às vezes trava no fim; com limite de tempo e
-    # até 3 tentativas (--clobber substitui o envio incompleto)
+    # Apaga os releases (de qualquer versão) dos tipos passados
+    apagar() {
+        echo ">> Apagando os releases antigos ($*)"
+        gh release list --limit 1000 --json tagName,isDraft -q '.[] | "\(.tagName) \(.isDraft)"' |
+            while read -r tag rascunho; do
+                case " $* " in *" $(tipo "$tag" "$rascunho") "*) ;; *) continue ;; esac
+                echo "   $tag"
+                if [ "$rascunho" = true ]; then  # rascunho não tem tag
+                    gh release delete "$tag" --yes </dev/null
+                else
+                    gh release delete "$tag" --yes --cleanup-tag </dev/null
+                    git tag -d "$tag" >/dev/null 2>&1 || true
+                fi
+            done
+    }
+    # O upload do .flatpak às vezes trava (ex.: a internet cai); com limite
+    # de tempo e até 3 tentativas (--clobber substitui o envio incompleto)
     enviar() {  # enviar <tag> <arquivo>
         local n
         for n in 1 2 3; do
@@ -1057,41 +1070,8 @@ if [ $PUBLICAR = 1 ]; then
         exit 1
     }
 
-    echo ">> Apagando os releases antigos (código e $MEU_TIPO)"
-    gh release list --limit 1000 --json tagName,isDraft -q '.[] | "\(.tagName) \(.isDraft)"' |
-        while read -r tag rascunho; do
-            t=$(tipo "$tag" "$rascunho")
-            [ "$t" = codigo ] || [ "$t" = $MEU_TIPO ] || continue
-            echo "   $tag"
-            if [ "$rascunho" = true ]; then  # rascunho não tem tag
-                gh release delete "$tag" --yes </dev/null
-            else
-                gh release delete "$tag" --yes --cleanup-tag </dev/null
-                git tag -d "$tag" >/dev/null 2>&1 || true
-            fi
-        done
-
-    if [ $PUBLICO = 1 ]; then
-        preencher > "$TMP/notas-flatpak.md" <<'NOTAS'
-Flatpak pronto do [Frame Perfect](https://frameperfect.cc) (cliente de Windows no Wine), gerado pelo `criar-flatpak.sh` do commit @COMMIT@.
-
-O `@ARQ@` não contém o cliente do Frame Perfect (que é proprietário): na primeira abertura ele baixa o cliente oficial de frameperfect.cc (~150 MB) e depois se atualiza sozinho.
-
-```sh
-flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-flatpak install --user @ARQ@
-flatpak run cc.frameperfect.FramePerfect
-```
-
-SHA-256: `@SHA@`
-
-Código e detalhes: [README](https://github.com/@REPO@#readme).
-NOTAS
-        echo ">> Publicando o .flatpak público (flatpak-$VERSAO)"
-        gh release create "flatpak-$VERSAO" --target "$COMMIT" --latest=false \
-            --title "$ARQ" --notes-file "$TMP/notas-flatpak.md"
-        enviar "flatpak-$VERSAO" "$ARQ"
-    else
+    if [ $PUBLICO = 0 ]; then
+        apagar full
         # Contém o cliente proprietário: só em rascunho (visível para quem
         # tem acesso de escrita ao repositório)
         preencher > "$TMP/notas-flatpak.md" <<'NOTAS'
@@ -1113,23 +1093,38 @@ NOTAS
         enviar "flatpak-full-$VERSAO" "$ARQ"
     fi
 
-    # O release do código aponta para o .flatpak público, se houver
-    PUBLICO_URL=$(gh release list --limit 1000 --json tagName,isDraft \
-        -q '.[] | select(.isDraft | not) | .tagName' | grep -m1 '^flatpak-[0-9]' || true)
-    [ -z "$PUBLICO_URL" ] || PUBLICO_URL=https://github.com/$REPO_GH/releases/tag/$PUBLICO_URL
-    {
-        cat <<'NOTAS'
+    # Release do código: a opção 6 sempre recria (com o .flatpak público);
+    # a opção 5 só cria se não existir nenhum
+    CODIGO_EXISTE=$(gh release list --limit 1000 --json tagName -q '.[].tagName' | grep -c '^v[0-9]' || true)
+    if [ $PUBLICO = 1 ] || [ "$CODIGO_EXISTE" = 0 ]; then
+        [ $PUBLICO = 1 ] && apagar codigo publico
+        {
+            cat <<'NOTAS'
 Flatpak do [Frame Perfect](https://frameperfect.cc) rodando o cliente de Windows (10/11) no Wine, no mesmo modelo do [com.fightcade.Fightcade](https://github.com/flathub/com.fightcade.Fightcade) do Flathub. Testado com o cliente **@VERSAO@**.
 
 NOTAS
-        if [ -n "$PUBLICO_URL" ]; then
-            cat <<'NOTAS'
-Para instalar sem compilar, use o [.flatpak pronto](@PUBLICO_URL@): ele não contém o cliente do Frame Perfect (que é proprietário) e o baixa do site oficial na primeira abertura.
+            if [ $PUBLICO = 1 ]; then
+                cat <<'NOTAS'
+### Instalar o .flatpak pronto
 
+O `@ARQ@` (abaixo) não contém o cliente do Frame Perfect (que é proprietário): na primeira abertura ele baixa o cliente oficial de frameperfect.cc (~150 MB) e depois se atualiza sozinho.
+
+```sh
+flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+flatpak install --user @ARQ@
+flatpak run cc.frameperfect.FramePerfect
+```
+
+SHA-256: `@SHA@`
+
+### Ou gerar na sua máquina
 NOTAS
-        fi
-        cat <<'NOTAS'
+            else
+                cat <<'NOTAS'
 ### Como gerar e instalar
+NOTAS
+            fi
+            cat <<'NOTAS'
 
 O script baixa o cliente oficial do site e gera o pacote na sua máquina:
 
@@ -1154,11 +1149,15 @@ Para levar a outro PC: gere o `.flatpak` (opção 1 ou 3 do menu) e instale lá 
 
 Detalhes no [README](https://github.com/@REPO@#readme).
 NOTAS
-    } | preencher > "$TMP/notas-codigo.md"
+        } | preencher > "$TMP/notas-codigo.md"
 
-    echo ">> Publicando o release do código (v$VERSAO)"
-    gh release create "v$VERSAO" --target "$COMMIT" --latest \
-        --title "Frame Perfect $VERSAO" --notes-file "$TMP/notas-codigo.md"
+        echo ">> Publicando o release do código (v$VERSAO)"
+        gh release create "v$VERSAO" --target "$COMMIT" --latest \
+            --title "Frame Perfect $VERSAO" --notes-file "$TMP/notas-codigo.md"
+        [ $PUBLICO = 0 ] || enviar "v$VERSAO" "$ARQ"
+    else
+        echo ">> Release do código mantido (é substituído pela opção 6, com o .flatpak público)"
+    fi
 fi
 
 echo

@@ -53,17 +53,18 @@ completo não tem versão na URL e o pacote versionado antigo some. O
 
 ### Publicar no GitHub
 
-`--publicar` (opções 5 e 6 do menu) faz o completo e publica três releases,
-cada um substituído só pelo do mesmo tipo, então os três ficam juntos:
+`--publicar` (opções 5 e 6 do menu) faz o completo e publica em dois
+releases, que ficam juntos (um não apaga o outro):
 
-- `v<versão>`: release do código (o "latest"), apontando para o commit atual;
-  recriado em toda publicação. Se houver o público, leva um link para ele;
+- `v<versão>`: release do código (o "latest"), apontando para o commit atual,
+  com o `.flatpak` público anexado. A opção 6 sempre o substitui; a opção 5 só
+  o cria (sem o anexo) se não existir nenhum;
 - `flatpak-full-<versão>`: rascunho privado com o `-full` (opção 5; só quem
-  tem acesso de escrita vê);
-- `flatpak-<versão>`: o `.flatpak` público (opção 6).
+  tem acesso de escrita vê).
 
 Os releases antigos do mesmo tipo (de qualquer versão) são apagados, com as
-tags. Exige tudo commitado e o commit atual no GitHub (push), e confere isso antes
+tags. O envio do `.flatpak` tem limite de 7 minutos por tentativa e até 3
+tentativas. Exige tudo commitado e o commit atual no GitHub (push), e confere isso antes
 de baixar ou compilar.
 
 ## Como funciona
