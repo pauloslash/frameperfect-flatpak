@@ -1046,6 +1046,16 @@ if [ $PUBLICAR = 1 ]; then
     }
     MEU_TIPO=full
     [ $PUBLICO = 1 ] && MEU_TIPO=publico
+    # O upload do .flatpak às vezes trava no fim; com limite de tempo e
+    # até 3 tentativas (--clobber substitui o envio incompleto)
+    enviar() {  # enviar <tag> <arquivo>
+        local n
+        for n in 1 2 3; do
+            timeout 900 gh release upload "$1" "$2" --clobber && return 0
+            echo "!! envio de $2 falhou (tentativa $n de 3)" >&2
+        done
+        exit 1
+    }
 
     echo ">> Apagando os releases antigos (código e $MEU_TIPO)"
     gh release list --limit 1000 --json tagName,isDraft -q '.[] | "\(.tagName) \(.isDraft)"' |
@@ -1079,7 +1089,8 @@ Código e detalhes: [README](https://github.com/@REPO@#readme).
 NOTAS
         echo ">> Publicando o .flatpak público (flatpak-$VERSAO)"
         gh release create "flatpak-$VERSAO" --target "$COMMIT" --latest=false \
-            --title "$ARQ" --notes-file "$TMP/notas-flatpak.md" "$ARQ"
+            --title "$ARQ" --notes-file "$TMP/notas-flatpak.md"
+        enviar "flatpak-$VERSAO" "$ARQ"
     else
         # Contém o cliente proprietário: só em rascunho (visível para quem
         # tem acesso de escrita ao repositório)
@@ -1098,7 +1109,8 @@ gh release download flatpak-full-@VERSAO@ -R @REPO@ -p '*.flatpak'
 NOTAS
         echo ">> Publicando o .flatpak em rascunho (flatpak-full-$VERSAO)"
         gh release create "flatpak-full-$VERSAO" --draft --target "$COMMIT" \
-            --title "$ARQ (privado)" --notes-file "$TMP/notas-flatpak.md" "$ARQ"
+            --title "$ARQ (privado)" --notes-file "$TMP/notas-flatpak.md"
+        enviar "flatpak-full-$VERSAO" "$ARQ"
     fi
 
     # O release do código aponta para o .flatpak público, se houver
