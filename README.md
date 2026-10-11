@@ -21,13 +21,13 @@ logado).
 ./criar-flatpak.sh --so-gerar      # só gera os arquivos
 ./criar-flatpak.sh --sem-instalar  # compila sem instalar
 ./criar-flatpak.sh --sem-bundle    # não gera o .flatpak
-./criar-flatpak.sh --publico       # .flatpak sem o cliente (FramePerfect-<versão>-publico.flatpak); não instala
+./criar-flatpak.sh --publico       # .flatpak sem o cliente (FramePerfect-<versão>.flatpak); não instala
 ./criar-flatpak.sh --publicar      # completo + publica os releases no GitHub (opções 5 e 6 do menu)
-./criar-flatpak.sh --instalar      # só instala o FramePerfect-<versão>.flatpak mais novo da pasta (opção 7)
+./criar-flatpak.sh --instalar      # só instala o FramePerfect-<versão>-full.flatpak mais novo da pasta (opção 7)
 flatpak run cc.frameperfect.FramePerfect
 ```
 
-Para instalar em outro PC, copie o `FramePerfect-<versão>.flatpak` junto com o
+Para instalar em outro PC, copie o `FramePerfect-<versão>-full.flatpak` junto com o
 `criar-flatpak.sh` e rode `./criar-flatpak.sh --instalar` lá (precisa só do
 `flatpak`; o Flathub é adicionado se faltar). Os dados do app em
 `~/.var/app/...` não são tocados. O script fecha o Frame Perfect antes de
@@ -35,8 +35,8 @@ instalar, se estiver aberto.
 
 ### Versão pública
 
-O `.flatpak` normal contém o cliente, que é proprietário, por isso só é
-publicado em rascunho privado. Com `--publico` o pacote sai sem o cliente
+O `.flatpak` normal (`FramePerfect-<versão>-full.flatpak`) contém o cliente,
+que é proprietário, por isso só é publicado em rascunho privado. Com `--publico` o pacote sai sem o cliente
 (~80 MB em vez de ~220 MB) e pode ser distribuído: na primeira abertura o
 lançador baixa o zip completo do site oficial (`full_download_url` da API,
 conferido pelo tamanho e pelo CRC de cada arquivo) para
@@ -44,7 +44,7 @@ conferido pelo tamanho e pelo CRC de cada arquivo) para
 `/app/frameperfect`, e as atualizações são aplicadas nele e na pasta do
 cliente. Sem internet na primeira abertura, o app avisa e fecha. Ele vai para
 outro repo local (`repo-publico/`) e não é instalado neste PC (trocaria a
-instalação atual); teste com `./criar-flatpak.sh --instalar FramePerfect-<versão>-publico.flatpak`.
+instalação atual); teste com `./criar-flatpak.sh --instalar FramePerfect-<versão>.flatpak`.
 
 Não usa `extra-data` (download na instalação, o mecanismo do Flathub) porque
 ele exige URL e SHA-256 fixos, e o site só mantém a versão atual: o zip
@@ -53,14 +53,17 @@ completo não tem versão na URL e o pacote versionado antigo some. O
 
 ### Publicar no GitHub
 
-`--publicar` (opções 5 e 6 do menu) faz o completo e depois apaga **todos**
-os releases do repositório (e as tags) e cria:
+`--publicar` (opções 5 e 6 do menu) faz o completo e publica três releases,
+cada um substituído só pelo do mesmo tipo, então os três ficam juntos:
 
-- `v<versão>`: release do código, apontando para o commit atual;
-- o `.flatpak`: no normal, em rascunho privado `flatpak-<versão>` (só quem tem
-  acesso de escrita vê); com `--publico`, anexado ao próprio `v<versão>`.
+- `v<versão>`: release do código (o "latest"), apontando para o commit atual;
+  recriado em toda publicação. Se houver o público, leva um link para ele;
+- `flatpak-full-<versão>`: rascunho privado com o `-full` (opção 5; só quem
+  tem acesso de escrita vê);
+- `flatpak-<versão>`: o `.flatpak` público (opção 6).
 
-Exige tudo commitado e o commit atual no GitHub (push), e confere isso antes
+Os releases antigos do mesmo tipo (de qualquer versão) são apagados, com as
+tags. Exige tudo commitado e o commit atual no GitHub (push), e confere isso antes
 de baixar ou compilar.
 
 ## Como funciona
