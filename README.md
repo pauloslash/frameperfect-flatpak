@@ -8,13 +8,13 @@ extensões.
 
 ## Baixar o .flatpak pronto
 
-**Download:** [FramePerfect-4.4.0.flatpak](https://github.com/pauloslash/frameperfect-flatpak/releases/download/v4.4.0/FramePerfect-4.4.0.flatpak)
+**Download:** [FramePerfect-4.3.0.flatpak](https://github.com/pauloslash/frameperfect-flatpak/releases/download/v4.3.0/FramePerfect-4.3.0.flatpak)
 (versão pública: não contém o cliente, que é baixado do site oficial na
 primeira abertura)
 
 ```sh
 flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-flatpak install --user FramePerfect-4.4.0.flatpak
+flatpak install --user FramePerfect-4.3.0.flatpak
 flatpak run cc.frameperfect.FramePerfect
 ```
 
