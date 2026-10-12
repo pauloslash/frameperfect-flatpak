@@ -6,6 +6,23 @@ Linux, rodando no Wine, no mesmo modelo do
 base `org.winehq.Wine` (stable-25.08), Wine Mono/Gecko e 32 bits herdados como
 extensões.
 
+## Baixar o .flatpak pronto
+
+**Download:** [FramePerfect-4.4.0.flatpak](https://github.com/pauloslash/frameperfect-flatpak/releases/download/v4.4.0/FramePerfect-4.4.0.flatpak)
+(versão pública: não contém o cliente, que é baixado do site oficial na
+primeira abertura)
+
+```sh
+flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+flatpak install --user FramePerfect-4.4.0.flatpak
+flatpak run cc.frameperfect.FramePerfect
+```
+
+O link e o comando são atualizados pelo `--publicar --publico` (opção 6) a
+cada versão.
+
+## Gerar na sua máquina
+
 **Tudo é gerado por `criar-flatpak.sh`.** Só o script basta: numa pasta vazia
 ele baixa o cliente e a fonte, gera o manifesto, o lançador, o .desktop, o
 metainfo, os ícones e o `fontes.reg`, e compila. Para mudar o pacote, mude o

@@ -1097,7 +1097,18 @@ NOTAS
     # a opção 5 só cria se não existir nenhum
     CODIGO_EXISTE=$(gh release list --limit 1000 --json tagName -q '.[].tagName' | grep -c '^v[0-9]' || true)
     if [ $PUBLICO = 1 ] || [ "$CODIGO_EXISTE" = 0 ]; then
-        [ $PUBLICO = 1 ] && apagar codigo publico
+        if [ $PUBLICO = 1 ]; then
+            # O link direto do README aponta para o .flatpak público desta
+            # versão: atualiza, faz commit e push, e o release usa esse commit
+            sed -i -E "s#FramePerfect-[0-9][0-9.]*\.flatpak#$ARQ#g; s#releases/download/v[0-9][0-9.]*/#releases/download/v$VERSAO/#g" README.md
+            if ! git diff --quiet README.md; then
+                echo ">> Atualizando o link de download do README para $VERSAO"
+                git commit -q -m "README: link de download do $ARQ" README.md
+                git push -q origin HEAD
+                COMMIT=$(git rev-parse HEAD)
+            fi
+            apagar codigo publico
+        fi
         {
             cat <<'NOTAS'
 Flatpak do [Frame Perfect](https://frameperfect.cc) rodando o cliente de Windows (10/11) no Wine, no mesmo modelo do [com.fightcade.Fightcade](https://github.com/flathub/com.fightcade.Fightcade) do Flathub. Testado com o cliente **@VERSAO@**.
