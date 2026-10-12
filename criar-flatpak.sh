@@ -1107,7 +1107,9 @@ NOTAS
                 cat <<'NOTAS'
 ### Instalar o .flatpak pronto
 
-O `@ARQ@` (abaixo) não contém o cliente do Frame Perfect (que é proprietário): na primeira abertura ele baixa o cliente oficial de frameperfect.cc (~150 MB) e depois se atualiza sozinho.
+**Download:** [@ARQ@](https://github.com/@REPO@/releases/download/v@VERSAO@/@ARQ@)
+
+O `@ARQ@` não contém o cliente do Frame Perfect (que é proprietário): na primeira abertura ele baixa o cliente oficial de frameperfect.cc (~150 MB) e depois se atualiza sozinho.
 
 ```sh
 flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
