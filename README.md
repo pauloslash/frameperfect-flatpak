@@ -8,17 +8,17 @@ extensões.
 
 ## Baixar o .flatpak pronto
 
-**Download:** [FramePerfect-4.4.0.flatpak](https://github.com/pauloslash/frameperfect-flatpak/releases/download/v4.4.0/FramePerfect-4.4.0.flatpak)
-(versão pública: não contém o cliente, que é baixado do site oficial na
-primeira abertura)
+**Download:** [FramePerfect.flatpak](https://github.com/pauloslash/frameperfect-flatpak/releases/latest/download/FramePerfect.flatpak)
+(versão pública: não contém o cliente; ele é baixado do site oficial na
+primeira abertura, sempre na versão mais recente, por isso o arquivo não tem
+versão no nome)
 
 ```sh
-flatpak install --user FramePerfect-4.4.0.flatpak
+flatpak install --user FramePerfect.flatpak
 flatpak run cc.frameperfect.FramePerfect
 ```
 
-O link e o comando são atualizados pelo `--publicar --publico` (opção 6) a
-cada versão.
+O link aponta sempre para o release mais recente.
 
 ## Gerar na sua máquina
 
@@ -37,7 +37,7 @@ logado).
 ./criar-flatpak.sh --so-gerar      # só gera os arquivos
 ./criar-flatpak.sh --sem-instalar  # compila sem instalar
 ./criar-flatpak.sh --sem-bundle    # não gera o .flatpak
-./criar-flatpak.sh --publico       # .flatpak sem o cliente (FramePerfect-<versão>.flatpak); não instala
+./criar-flatpak.sh --publico       # .flatpak sem o cliente (FramePerfect.flatpak); não instala
 ./criar-flatpak.sh --publicar      # completo + publica os releases no GitHub (opções 5 e 6 do menu)
 ./criar-flatpak.sh --instalar      # só instala o FramePerfect-<versão>-full.flatpak mais novo da pasta (opção 7)
 flatpak run cc.frameperfect.FramePerfect
@@ -60,7 +60,7 @@ conferido pelo tamanho e pelo CRC de cada arquivo) para
 `/app/frameperfect`, e as atualizações são aplicadas nele e na pasta do
 cliente. Sem internet na primeira abertura, o app avisa e fecha. Ele vai para
 outro repo local (`repo-publico/`) e não é instalado neste PC (trocaria a
-instalação atual); teste com `./criar-flatpak.sh --instalar FramePerfect-<versão>.flatpak`.
+instalação atual); teste com `./criar-flatpak.sh --instalar FramePerfect.flatpak`.
 
 Não usa `extra-data` (download na instalação, o mecanismo do Flathub) porque
 ele exige URL e SHA-256 fixos, e o site só mantém a versão atual: o zip

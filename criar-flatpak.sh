@@ -63,9 +63,8 @@ instalar_bundle() {  # instalar_bundle [arquivo]
         # O -full (com o cliente) tem preferência sobre o público
         arq=$(find . -maxdepth 1 -name 'FramePerfect-*-full.flatpak' \
             -printf '%f\n' | sort -V | tail -1)
-        [ -n "$arq" ] || arq=$(find . -maxdepth 1 -name 'FramePerfect-*.flatpak' \
-            -printf '%f\n' | sort -V | tail -1)
-        [ -n "$arq" ] || { echo "nenhum FramePerfect-*.flatpak em $DIR" >&2; exit 1; }
+        [ -n "$arq" ] || [ ! -f FramePerfect.flatpak ] || arq=FramePerfect.flatpak
+        [ -n "$arq" ] || { echo "nenhum FramePerfect-*-full.flatpak ou FramePerfect.flatpak em $DIR" >&2; exit 1; }
     fi
     [ -f "$arq" ] || { echo "arquivo não encontrado: $arq" >&2; exit 1; }
     flatpak --user remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
@@ -954,12 +953,13 @@ flatpak install -y --noninteractive --user flathub \
 
 # A versão pública vai para outro repo: o remote frameperfect-local (o repo/)
 # é de onde a instalação deste PC se atualiza. O .flatpak com o cliente leva
-# "-full" no nome; o público fica só com a versão.
+# a versão e "-full" no nome; o público não tem versão no nome, porque baixa
+# sempre o cliente mais recente.
 REPO=repo
 ARQ=FramePerfect-$VERSAO-full.flatpak
 if [ $PUBLICO = 1 ]; then
     REPO=repo-publico
-    ARQ=FramePerfect-$VERSAO.flatpak
+    ARQ=FramePerfect.flatpak
 fi
 
 # Sem --install: instalando de dentro do sandbox do Builder, o .desktop
@@ -1097,18 +1097,7 @@ NOTAS
     # a opção 5 só cria se não existir nenhum
     CODIGO_EXISTE=$(gh release list --limit 1000 --json tagName -q '.[].tagName' | grep -c '^v[0-9]' || true)
     if [ $PUBLICO = 1 ] || [ "$CODIGO_EXISTE" = 0 ]; then
-        if [ $PUBLICO = 1 ]; then
-            # O link direto do README aponta para o .flatpak público desta
-            # versão: atualiza, faz commit e push, e o release usa esse commit
-            sed -i -E "s#FramePerfect-[0-9][0-9.]*\.flatpak#$ARQ#g; s#releases/download/v[0-9][0-9.]*/#releases/download/v$VERSAO/#g" README.md
-            if ! git diff --quiet README.md; then
-                echo ">> Atualizando o link de download do README para $VERSAO"
-                git commit -q -m "README: link de download do $ARQ" README.md
-                git push -q origin HEAD
-                COMMIT=$(git rev-parse HEAD)
-            fi
-            apagar codigo publico
-        fi
+        [ $PUBLICO = 1 ] && apagar codigo publico
         {
             cat <<'NOTAS'
 Flatpak do [Frame Perfect](https://frameperfect.cc) rodando o cliente de Windows (10/11) no Wine, no mesmo modelo do [com.fightcade.Fightcade](https://github.com/flathub/com.fightcade.Fightcade) do Flathub. Testado com o cliente **@VERSAO@**.
@@ -1118,7 +1107,7 @@ NOTAS
                 cat <<'NOTAS'
 ### Instalar o .flatpak pronto
 
-**Download:** [@ARQ@](https://github.com/@REPO@/releases/download/v@VERSAO@/@ARQ@)
+**Download:** [@ARQ@](https://github.com/@REPO@/releases/latest/download/@ARQ@)
 
 O `@ARQ@` não contém o cliente do Frame Perfect (que é proprietário): na primeira abertura ele baixa o cliente oficial de frameperfect.cc (~150 MB) e depois se atualiza sozinho.
 
