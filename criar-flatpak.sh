@@ -1123,7 +1123,6 @@ NOTAS
 O `@ARQ@` não contém o cliente do Frame Perfect (que é proprietário): na primeira abertura ele baixa o cliente oficial de frameperfect.cc (~150 MB) e depois se atualiza sozinho.
 
 ```sh
-flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 flatpak install --user @ARQ@
 flatpak run cc.frameperfect.FramePerfect
 ```

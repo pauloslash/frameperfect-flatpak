@@ -13,7 +13,6 @@ extensões.
 primeira abertura)
 
 ```sh
-flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 flatpak install --user FramePerfect-4.4.0.flatpak
 flatpak run cc.frameperfect.FramePerfect
 ```
