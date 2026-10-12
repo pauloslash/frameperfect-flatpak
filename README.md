@@ -72,7 +72,8 @@ completo não tem versão na URL e o pacote versionado antigo some. O
 `--publicar` (opções 5 e 6 do menu) faz o completo e publica em dois
 releases, que ficam juntos (um não apaga o outro):
 
-- `v<versão>`: release do código (o "latest"), apontando para o commit atual,
+- `flatpak`: release do código (o "latest", título "Frame Perfect Flatpak",
+  sem a versão do cliente), apontando para o commit atual,
   com o `.flatpak` público anexado. A opção 6 sempre o substitui; a opção 5 só
   o cria (sem o anexo) se não existir nenhum;
 - `flatpak-full-<versão>`: rascunho privado com o `-full` (opção 5; só quem

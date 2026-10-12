@@ -17,7 +17,7 @@
 #                                      1ª abertura); pode ser distribuído. Não instala.
 #   ./criar-flatpak.sh --publicar      completo e publica no GitHub o -full em rascunho
 #                                      privado; com --publico, o release do código
-#                                      (v<versão>) com o .flatpak público anexado. Um não
+#                                      (tag flatpak) com o .flatpak público anexado. Um não
 #                                      apaga o outro.
 #   ./criar-flatpak.sh --instalar [arquivo]
 #                                      só instala um .flatpak já gerado (padrão: o
@@ -116,7 +116,7 @@ if [ $# -eq 0 ] && [ -t 0 ]; then
   6) Publicar a versão pública no GitHub
      Gera o .flatpak sem o cliente (ele é baixado do site oficial na
      primeira abertura), sem instalar neste PC, e publica: substitui o
-     release do código (v<versão>), com esse .flatpak anexado. O -full
+     release do código (tag flatpak), com esse .flatpak anexado. O -full
      (opção 5) não é apagado.
 
   7) Só instalar um .flatpak já gerado
@@ -1023,7 +1023,9 @@ fi
 
 # ---------------------------------------------------------------------------
 # 7. Publica no GitHub (--publicar). São dois releases:
-#    - v<versão>: o código (o "latest") com o .flatpak público anexado.
+#    - flatpak: o código (o "latest") com o .flatpak público anexado. Sem a
+#      versão do cliente (a pública baixa sempre a mais recente): tag fixa,
+#      apagada e recriada a cada publicação.
 #      Substituído pela opção 6; a opção 5 só o cria se não houver nenhum
 #      (sem o anexo), para não apagar o público;
 #    - flatpak-full-<versão>: rascunho privado com o -full (opção 5).
@@ -1038,7 +1040,7 @@ if [ $PUBLICAR = 1 ]; then
     }
     tipo() {  # tipo <tag> <rascunho>: codigo, full ou publico
         case $1 in
-            v[0-9]*) echo codigo ;;
+            flatpak|v[0-9]*) echo codigo ;;  # v<versão>: formato antigo
             flatpak-full-*) echo full ;;
             flatpak-*) [ "$2" = true ] && echo full || echo publico ;;  # formatos antigos
             *) echo outro ;;
@@ -1095,12 +1097,12 @@ NOTAS
 
     # Release do código: a opção 6 sempre recria (com o .flatpak público);
     # a opção 5 só cria se não existir nenhum
-    CODIGO_EXISTE=$(gh release list --limit 1000 --json tagName -q '.[].tagName' | grep -c '^v[0-9]' || true)
+    CODIGO_EXISTE=$(gh release list --limit 1000 --json tagName -q '.[].tagName' | grep -cE '^(flatpak|v[0-9].*)$' || true)
     if [ $PUBLICO = 1 ] || [ "$CODIGO_EXISTE" = 0 ]; then
         [ $PUBLICO = 1 ] && apagar codigo publico
         {
             cat <<'NOTAS'
-Flatpak do [Frame Perfect](https://frameperfect.cc) rodando o cliente de Windows (10/11) no Wine, no mesmo modelo do [com.fightcade.Fightcade](https://github.com/flathub/com.fightcade.Fightcade) do Flathub. Testado com o cliente **@VERSAO@**.
+Flatpak do [Frame Perfect](https://frameperfect.cc) rodando o cliente de Windows (10/11) no Wine, no mesmo modelo do [com.fightcade.Fightcade](https://github.com/flathub/com.fightcade.Fightcade) do Flathub.
 
 NOTAS
             if [ $PUBLICO = 1 ]; then
@@ -1152,10 +1154,10 @@ Detalhes no [README](https://github.com/@REPO@#readme).
 NOTAS
         } | preencher > "$TMP/notas-codigo.md"
 
-        echo ">> Publicando o release do código (v$VERSAO)"
-        gh release create "v$VERSAO" --target "$COMMIT" --latest \
-            --title "Frame Perfect $VERSAO" --notes-file "$TMP/notas-codigo.md"
-        [ $PUBLICO = 0 ] || enviar "v$VERSAO" "$ARQ"
+        echo ">> Publicando o release do código (flatpak)"
+        gh release create flatpak --target "$COMMIT" --latest \
+            --title "Frame Perfect Flatpak" --notes-file "$TMP/notas-codigo.md"
+        [ $PUBLICO = 0 ] || enviar flatpak "$ARQ"
     else
         echo ">> Release do código mantido (é substituído pela opção 6, com o .flatpak público)"
     fi
