@@ -590,6 +590,98 @@ if not dono or n.value < 1:
 sys.exit(0 if dono >> 21 == dados[0] >> 21 else 1)
 EOF
 
+# Área de transferência para o aviso do compositor (usado pelo lançador)
+cat > scripts/copiar.py <<'EOF'
+#!/usr/bin/env python3
+# Gerado por criar-flatpak.sh.
+# uso: <texto> | copiar.py
+# Põe o texto na área de transferência do X (CLIPBOARD e PRIMARY). O sandbox
+# não tem xclip/xsel; no X quem copia precisa continuar rodando para entregar
+# o texto a quem colar, então fica em segundo plano até outro programa copiar
+# algo (SelectionClear) ou por até 30 minutos.
+import ctypes, os, select, sys, time
+
+texto = sys.stdin.buffer.read()
+if os.fork():  # o chamador segue; o filho guarda o texto
+    sys.exit(0)
+os.setsid()
+
+x = ctypes.cdll.LoadLibrary('libX11.so.6')
+x.XOpenDisplay.restype = ctypes.c_void_p
+x.XInternAtom.restype = ctypes.c_ulong
+x.XDefaultRootWindow.restype = ctypes.c_ulong
+x.XCreateSimpleWindow.restype = ctypes.c_ulong
+x.XGetSelectionOwner.restype = ctypes.c_ulong
+d = x.XOpenDisplay(None)
+if not d:
+    sys.exit(1)
+d = ctypes.c_void_p(d)
+atomo = lambda nome: x.XInternAtom(d, nome, 0)
+CLIPBOARD, PRIMARY = atomo(b'CLIPBOARD'), 1  # XA_PRIMARY
+TARGETS, UTF8, TEXTO = atomo(b'TARGETS'), atomo(b'UTF8_STRING'), atomo(b'TEXT')
+STRING, ATOM = 31, 4  # XA_STRING, XA_ATOM
+SelectionClear, SelectionRequest, SelectionNotify = 29, 30, 31
+
+
+class Pedido(ctypes.Structure):
+    _fields_ = [('type', ctypes.c_int), ('serial', ctypes.c_ulong), ('send_event', ctypes.c_int),
+                ('display', ctypes.c_void_p), ('owner', ctypes.c_ulong), ('requestor', ctypes.c_ulong),
+                ('selection', ctypes.c_ulong), ('target', ctypes.c_ulong),
+                ('property', ctypes.c_ulong), ('time', ctypes.c_ulong)]
+
+
+class Resposta(ctypes.Structure):
+    _fields_ = [('type', ctypes.c_int), ('serial', ctypes.c_ulong), ('send_event', ctypes.c_int),
+                ('display', ctypes.c_void_p), ('requestor', ctypes.c_ulong), ('selection', ctypes.c_ulong),
+                ('target', ctypes.c_ulong), ('property', ctypes.c_ulong), ('time', ctypes.c_ulong)]
+
+
+class Perda(ctypes.Structure):
+    _fields_ = [('type', ctypes.c_int), ('serial', ctypes.c_ulong), ('send_event', ctypes.c_int),
+                ('display', ctypes.c_void_p), ('window', ctypes.c_ulong), ('selection', ctypes.c_ulong),
+                ('time', ctypes.c_ulong)]
+
+
+class Evento(ctypes.Union):
+    _fields_ = [('type', ctypes.c_int), ('pedido', Pedido), ('resposta', Resposta),
+                ('perda', Perda), ('pad', ctypes.c_long * 24)]
+
+
+janela = x.XCreateSimpleWindow(d, ctypes.c_ulong(x.XDefaultRootWindow(d)), 0, 0, 1, 1, 0, 0, 0)
+for sel in (CLIPBOARD, PRIMARY):
+    x.XSetSelectionOwner(d, ctypes.c_ulong(sel), ctypes.c_ulong(janela), ctypes.c_ulong(0))
+if x.XGetSelectionOwner(d, ctypes.c_ulong(CLIPBOARD)) != janela:
+    sys.exit(1)
+x.XFlush(d)
+
+ev = Evento()
+donas = {CLIPBOARD, PRIMARY}
+fim = time.monotonic() + 30 * 60
+conexao = x.XConnectionNumber(d)
+while donas and time.monotonic() < fim:
+    select.select([conexao], [], [], max(0, fim - time.monotonic()))
+    while x.XPending(d):
+        x.XNextEvent(d, ctypes.byref(ev))
+        if ev.type == SelectionClear:  # outro programa copiou algo
+            donas.discard(ev.perda.selection)
+        elif ev.type == SelectionRequest:
+            p = ev.pedido
+            prop = p.property or p.target  # clientes antigos mandam None
+            if p.target == TARGETS:
+                lista = (ctypes.c_ulong * 4)(TARGETS, UTF8, STRING, TEXTO)
+                x.XChangeProperty(d, ctypes.c_ulong(p.requestor), ctypes.c_ulong(prop),
+                                  ctypes.c_ulong(ATOM), 32, 0, lista, 4)
+            elif p.target in (UTF8, STRING, TEXTO):
+                tipo = UTF8 if p.target != STRING else STRING
+                x.XChangeProperty(d, ctypes.c_ulong(p.requestor), ctypes.c_ulong(prop),
+                                  ctypes.c_ulong(tipo), 8, 0, texto, len(texto))
+            else:
+                prop = 0  # formato que não temos: recusa
+            r = Resposta(SelectionNotify, 0, 1, None, p.requestor, p.selection, p.target, prop, p.time)
+            x.XSendEvent(d, ctypes.c_ulong(p.requestor), 0, ctypes.c_long(0), ctypes.byref(r))
+            x.XFlush(d)
+EOF
+
 # Mostra a tela de carregando do emulador por cima do jogo (usado pelo lançador)
 cat > scripts/vigia.py <<'EOF'
 #!/usr/bin/env python3
@@ -1097,30 +1189,37 @@ esac
 # O compositor do Marco só redesenha os popups do WPF (selectbox, menus) quando
 # outro evento acontece na tela, ex.: o mouse sair do app. O Flatpak não mexe
 # no desktop, então só avisa, a cada abertura, até trocarem o compositor ou
-# marcarem "Não exibir mais".
+# marcarem "Não exibir mais". "Copiar comandos" põe os comandos na área de
+# transferência (copiar.py); executá-los daqui exigiria liberar o app para
+# rodar qualquer coisa fora do sandbox (org.freedesktop.Flatpak).
 SEM_AVISO=$DATA/.fp-sem-aviso-compositor
-case ${XDG_CURRENT_DESKTOP:-} in *MATE*)
-    if [ ! -f "$SEM_AVISO" ] && command -v zenity >/dev/null &&
-       python3 /app/share/frameperfect/compositor.py; then
-        cat <<'AVISO' | zenity --text-info --title="Frame Perfect: compositor do MATE" \
-                --width=640 --height=420 --ok-label="Não exibir mais" \
-                --cancel-label="Fechar" 2>/dev/null && touch "$SEM_AVISO" &
+# Um comando só, encadeado com &&: colado no terminal, o sudo pede a senha
+# antes de o resto rodar (linhas soltas seriam lidas como a senha)
+COMANDOS_PICOM=$(cat <<'CMD'
+sudo apt install -y picom && \
+gsettings set org.mate.Marco.general compositing-manager false && \
+mkdir -p ~/.config/autostart && \
+printf '[Desktop Entry]\nType=Application\nName=Picom\nExec=picom --backend xrender --unredir-if-possible\nX-MATE-Autostart-enabled=true\n' > ~/.config/autostart/picom.desktop && \
+(setsid picom --backend xrender --unredir-if-possible >/dev/null 2>&1 &)
+CMD
+)
+aviso_compositor() {
+    copiado=
+    while :; do
+        resposta=$({
+            [ -n "$copiado" ] && printf '%s\n\n' "✔ Comandos copiados: cole num terminal (Ctrl+Shift+V) e tecle Enter."
+            cat <<'AVISO'
 O compositor do MATE (Marco) atrasa os menus do Frame Perfect: as listas
 de seleção só aparecem quando o mouse sai da janela do app.
 
 Para corrigir, troque o compositor do Marco pelo picom (mantém sombras e
-transparências). Num terminal:
+transparências). Os comandos abaixo, num terminal, instalam o picom
+(Ubuntu/Debian/Mint), desligam o compositor do Marco e iniciam o picom
+agora e em todo login. "Copiar comandos" copia todos de uma vez.
 
-1. Instale o picom (Ubuntu/Debian/Mint):
-   sudo apt install picom
-
-2. Desligue o compositor do Marco:
-   gsettings set org.mate.Marco.general compositing-manager false
-
-3. Inicie o picom agora e em todo login:
-   picom --backend xrender --unredir-if-possible &
-   mkdir -p ~/.config/autostart
-   printf '[Desktop Entry]\nType=Application\nName=Picom\nExec=picom --backend xrender --unredir-if-possible\nX-MATE-Autostart-enabled=true\n' > ~/.config/autostart/picom.desktop
+AVISO
+            printf '%s\n' "$COMANDOS_PICOM"
+            cat <<'AVISO'
 
 O --unredir-if-possible tira o compositor do caminho nos jogos em tela
 cheia. Para desfazer: apague ~/.config/autostart/picom.desktop e rode
@@ -1128,6 +1227,23 @@ gsettings set org.mate.Marco.general compositing-manager true
 
 Este aviso some sozinho depois da troca.
 AVISO
+        } | zenity --text-info --title="Frame Perfect: compositor do MATE" \
+                --width=720 --height=480 --ok-label="Não exibir mais" \
+                --cancel-label="Fechar" --extra-button="Copiar comandos" 2>/dev/null)
+        status=$?
+        if [ "$resposta" = "Copiar comandos" ]; then
+            printf '%s\n' "$COMANDOS_PICOM" | python3 /app/share/frameperfect/copiar.py
+            copiado=1
+            continue
+        fi
+        [ $status = 0 ] && touch "$SEM_AVISO"
+        return
+    done
+}
+case ${XDG_CURRENT_DESKTOP:-} in *MATE*)
+    if [ ! -f "$SEM_AVISO" ] && command -v zenity >/dev/null &&
+       python3 /app/share/frameperfect/compositor.py; then
+        aviso_compositor &
     fi
 ;; esac
 
@@ -1253,6 +1369,7 @@ ${CLIENTE_CMDS}      - install -Dm755 frameperfect.sh /app/bin/frameperfect
       - install -Dm644 atualizar.py /app/share/frameperfect/atualizar.py
       - install -Dm644 compositor.py /app/share/frameperfect/compositor.py
       - install -Dm644 vigia.py /app/share/frameperfect/vigia.py
+      - install -Dm644 copiar.py /app/share/frameperfect/copiar.py
       - install -Dm644 fontes.py /app/share/frameperfect/fontes.py
       - mkdir -p /app/share/frameperfect/fontes
       - python3 fontes.py NotoEmoji.ttf /app/share/frameperfect/fontes/NotoEmoji.ttf --notdef-vazio
@@ -1279,6 +1396,8 @@ ${CLIENTE_SRCS}      - type: file
         path: scripts/compositor.py
       - type: file
         path: scripts/vigia.py
+      - type: file
+        path: scripts/copiar.py
 ${BARLOW_SRCS}      - type: file
         path: $APP_ID.desktop
       - type: file

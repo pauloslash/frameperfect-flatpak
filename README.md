@@ -160,7 +160,13 @@ de baixar ou compilar.
   `--unredir-if-possible` tira o compositor do caminho em tela cheia). No
   MATE, se o compositor ativo for o do Marco (`scripts/compositor.py`), o
   lançador mostra esses passos num aviso a cada abertura, até a troca ou até
-  marcarem "Não exibir mais" (`.../data/.fp-sem-aviso-compositor`). Nada disso
+  marcarem "Não exibir mais" (`.../data/.fp-sem-aviso-compositor`). O botão
+  "Copiar comandos" põe todos na área de transferência (`scripts/copiar.py`,
+  pelo X, já que o sandbox não tem xclip), como um só comando encadeado com
+  `&&` (colado, o `sudo` pede a senha antes do resto). Não há botão de
+  executar: rodar comandos fora do sandbox exigiria a permissão
+  `org.freedesktop.Flatpak`, que libera o app (e o cliente de Windows) para
+  executar qualquer coisa no sistema. Nada disso
   afeta o emulador: ele é outro processo (`arcade.exe`), com o próprio
   DirectX 9, e não é WPF.
 - Nomes dos jogadores no placar do emulador: ele pede a Johnny Fever
