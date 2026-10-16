@@ -254,7 +254,7 @@ mkdir -p scripts
 cat > scripts/fontes.py <<'EOF'
 #!/usr/bin/env python3
 # Gerado por criar-flatpak.sh.
-# uso: fontes.py <entrada.ttf> <saida.ttf> [--renomear DE PARA] [--revisao] [--notdef-vazio]
+# uso: fontes.py <entrada.ttf> <saida.ttf> [--renomear DE PARA] [--revisao] [--notdef-vazio] [--bold]
 #
 # Desliga a ligadura 'liga' (fi, fl, ...): no WPF do Wine Mono cada ligadura
 # desenha um quadradinho a mais no texto ("confirma.□"). A tag é renomeada
@@ -264,10 +264,17 @@ cat > scripts/fontes.py <<'EOF'
 # fonte de mesmo nome que ele já tem (ex.: a Tahoma do próprio Wine).
 # --notdef-vazio deixa vazio o glifo .notdef (o "quadrado"): o WPF do Wine
 # Mono desenha um .notdef a mais depois de cada emoji ("🏆□ RECORDES").
+# --bold marca a cópia como a face Bold da mesma família (peso 700, bits de
+# negrito, nomes "Bold"), sem mudar o desenho: quando pedem negrito de uma
+# fonte que só tem Regular, o Wine engrossa as letras em todas as direções
+# (o Windows só na horizontal) e o texto fica "esmagado"; com uma face Bold
+# ele usa esta como está (ex.: a Johnny Fever do placar do emulador).
 import struct, sys
 
 args = sys.argv[1:]
-renomear = revisao = notdef = None
+renomear = revisao = notdef = bold = None
+if '--bold' in args:
+    args.remove('--bold'); bold = True
 if '--notdef-vazio' in args:
     args.remove('--notdef-vazio'); notdef = True
 if '--revisao' in args:
@@ -308,8 +315,16 @@ if revisao:
     h = off(b'head')
     struct.pack_into('>i', d, h+4, struct.unpack_from('>i', d, h+4)[0] + (100 << 16))
 
-if renomear:
-    de, para = renomear
+if bold:
+    os2 = off(b'OS/2')
+    struct.pack_into('>H', d, os2+4, 700)  # usWeightClass
+    fs = struct.unpack_from('>H', d, os2+62)[0]
+    struct.pack_into('>H', d, os2+62, (fs & ~0x40) | 0x20)  # fsSelection: sem REGULAR, com BOLD
+    h = off(b'head')
+    struct.pack_into('>H', d, h+44, struct.unpack_from('>H', d, h+44)[0] | 1)  # macStyle bold
+
+if renomear or bold:
+    de, para = renomear or ('', '')
     base = off(b'name')
     cnt, soff = struct.unpack_from('>HH', d, base+2)
     recs, dados = [], b''
@@ -317,10 +332,17 @@ if renomear:
         pid, eid, lid, nid, ln, o = struct.unpack_from('>6H', d, base+6+12*k)
         enc = 'utf-16-be' if pid in (0, 3) else 'latin-1'
         txt = bytes(d[base+soff+o:base+soff+o+ln]).decode(enc)
-        if nid in (1, 3, 4, 16, 18, 21):
+        if de and nid in (1, 3, 4, 16, 18, 21):
             txt = txt.replace(de, para)
-        elif nid == 6:
+        elif de and nid == 6:
             txt = txt.replace(de.replace(' ', ''), para.replace(' ', ''))
+        if bold:
+            if nid in (2, 17):
+                txt = 'Bold'
+            elif nid in (3, 4, 18):
+                txt = txt.replace('Regular', 'Bold') if 'Regular' in txt else txt + ' Bold'
+            elif nid == 6:
+                txt = txt.replace('-Regular', '-Bold') if '-Regular' in txt else txt + '-Bold'
         raw = txt.encode(enc)
         recs.append((pid, eid, lid, nid, len(raw), len(dados)))
         dados += raw
@@ -534,6 +556,255 @@ with zipfile.ZipFile(pacote) as z:
 print('atualização aplicada em', destino)
 EOF
 
+# Detecta o compositor do Marco (usado pelo lançador para o aviso do MATE)
+cat > scripts/compositor.py <<'EOF'
+#!/usr/bin/env python3
+# Gerado por criar-flatpak.sh.
+# Sai com 0 se o compositor ativo é o do próprio gerenciador de janelas (o
+# Marco, no MATE): o dono da seleção _NET_WM_CM_S0 é do mesmo cliente X que a
+# janela _NET_SUPPORTING_WM_CHECK. Sai com 1 se não há compositor ou se ele é
+# outro programa (ex.: picom).
+import ctypes, sys
+
+x = ctypes.cdll.LoadLibrary('libX11.so.6')
+x.XOpenDisplay.restype = ctypes.c_void_p
+x.XInternAtom.restype = ctypes.c_ulong
+x.XDefaultRootWindow.restype = ctypes.c_ulong
+x.XGetSelectionOwner.restype = ctypes.c_ulong
+d = x.XOpenDisplay(None)
+if not d:
+    sys.exit(1)
+d = ctypes.c_void_p(d)
+atomo = lambda nome: ctypes.c_ulong(x.XInternAtom(d, nome, 0))
+
+dono = x.XGetSelectionOwner(d, atomo(b'_NET_WM_CM_S0'))
+tipo, fmt = ctypes.c_ulong(), ctypes.c_int()
+n, resto, dados = ctypes.c_ulong(), ctypes.c_ulong(), ctypes.POINTER(ctypes.c_ulong)()
+x.XGetWindowProperty(d, ctypes.c_ulong(x.XDefaultRootWindow(d)),
+                     atomo(b'_NET_SUPPORTING_WM_CHECK'), 0, 1, 0, ctypes.c_ulong(0),
+                     ctypes.byref(tipo), ctypes.byref(fmt), ctypes.byref(n),
+                     ctypes.byref(resto), ctypes.byref(dados))
+if not dono or n.value < 1:
+    sys.exit(1)
+# Os ids de um cliente X compartilham a base (bits acima de 0x1fffff)
+sys.exit(0 if dono >> 21 == dados[0] >> 21 else 1)
+EOF
+
+# Mostra a tela de carregando do emulador por cima do jogo (usado pelo lançador)
+cat > scripts/vigia.py <<'EOF'
+#!/usr/bin/env python3
+# Gerado por criar-flatpak.sh.
+# Mostra a janela "Carregando partida" do emulador (arcade.exe) por cima do
+# jogo. Ela é "sempre por cima" (_NET_WM_STATE_ABOVE) e não aceita foco, mas o
+# Marco (MATE) põe a janela do jogo, em tela cheia e com o foco, numa camada
+# acima dela, e a mensagem fica escondida atrás de uma tela preta. Enquanto a
+# janela de carregando existir, o jogo fica marcado como "abaixo"
+# (_NET_WM_STATE_BELOW); quando ela fecha, a marca sai. O foco não muda.
+# Ativar a janela de carregando não funciona (o Marco ignora).
+# Espera eventos do X (sem varrer em loop): só age quando a lista de janelas
+# ou o estado de uma janela do arcade.exe muda.
+import ctypes, select, signal, sys, time
+log = lambda *a: print(time.strftime('%T') + '.%03d' % (time.time() % 1 * 1000), *a, file=sys.stderr, flush=True)
+
+x = ctypes.cdll.LoadLibrary('libX11.so.6')
+x.XOpenDisplay.restype = ctypes.c_void_p
+x.XInternAtom.restype = ctypes.c_ulong
+x.XDefaultRootWindow.restype = ctypes.c_ulong
+
+# Janelas somem a qualquer momento: ignora os erros do X em vez de sair
+TratarErro = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p)
+ignorar = TratarErro(lambda d, e: 0)
+x.XSetErrorHandler(ignorar)
+
+d = x.XOpenDisplay(None)
+if not d:
+    sys.exit(0)
+d = ctypes.c_void_p(d)
+raiz = x.XDefaultRootWindow(d)
+atomo = lambda nome: x.XInternAtom(d, nome, 0)
+LISTA = atomo(b'_NET_CLIENT_LIST')
+PILHA = atomo(b'_NET_CLIENT_LIST_STACKING')
+ESTADO = atomo(b'_NET_WM_STATE')
+ACIMA = atomo(b'_NET_WM_STATE_ABOVE')
+SEM_BARRA = atomo(b'_NET_WM_STATE_SKIP_TASKBAR')
+ABAIXO = atomo(b'_NET_WM_STATE_BELOW')
+ATIVA = atomo(b'_NET_ACTIVE_WINDOW')
+TELA_CHEIA = atomo(b'_NET_WM_STATE_FULLSCREEN')
+OCULTA = atomo(b'_NET_WM_STATE_HIDDEN')
+WM_CLASS = atomo(b'WM_CLASS')
+
+PropertyChangeMask = 1 << 22
+SubstructureNotifyMask = 1 << 19
+SubstructureRedirectMask = 1 << 20
+PropertyNotify, ClientMessage = 28, 33
+
+
+def propriedade(janela, prop):
+    tipo, fmt = ctypes.c_ulong(), ctypes.c_int()
+    n, resto = ctypes.c_ulong(), ctypes.c_ulong()
+    dados = ctypes.POINTER(ctypes.c_ubyte)()
+    if x.XGetWindowProperty(d, ctypes.c_ulong(janela), ctypes.c_ulong(prop), 0, 1024, 0,
+                            ctypes.c_ulong(0), ctypes.byref(tipo), ctypes.byref(fmt),
+                            ctypes.byref(n), ctypes.byref(resto), ctypes.byref(dados)) or not dados:
+        return None
+    try:
+        if fmt.value == 32:  # vem como array de long
+            return list(ctypes.cast(dados, ctypes.POINTER(ctypes.c_ulong))[:n.value])
+        return bytes(dados[:n.value])
+    finally:
+        x.XFree(dados)
+
+
+class EventoPropriedade(ctypes.Structure):
+    _fields_ = [('type', ctypes.c_int), ('serial', ctypes.c_ulong), ('send_event', ctypes.c_int),
+                ('display', ctypes.c_void_p), ('window', ctypes.c_ulong), ('atom', ctypes.c_ulong),
+                ('time', ctypes.c_ulong), ('state', ctypes.c_int)]
+
+
+class EventoMensagem(ctypes.Structure):
+    _fields_ = [('type', ctypes.c_int), ('serial', ctypes.c_ulong), ('send_event', ctypes.c_int),
+                ('display', ctypes.c_void_p), ('window', ctypes.c_ulong),
+                ('message_type', ctypes.c_ulong), ('format', ctypes.c_int), ('l', ctypes.c_long * 5)]
+
+
+class Evento(ctypes.Union):
+    _fields_ = [('type', ctypes.c_int), ('xproperty', EventoPropriedade),
+                ('xclient', EventoMensagem), ('pad', ctypes.c_long * 24)]
+
+
+def mensagem(janela, tipo, *dados):
+    ev = Evento()
+    m = ev.xclient
+    m.type, m.send_event, m.window = ClientMessage, 1, janela
+    m.message_type, m.format = tipo, 32
+    for i, v in enumerate(dados):
+        m.l[i] = v
+    x.XSendEvent(d, ctypes.c_ulong(raiz), 0,
+                 ctypes.c_long(SubstructureRedirectMask | SubstructureNotifyMask), ctypes.byref(ev))
+    x.XFlush(d)
+
+
+def mudar_estado(janela, ligar, estado):
+    mensagem(janela, ESTADO, 1 if ligar else 0, estado, 0, 2)  # 2: pedido de "pager"
+
+
+vigiadas = set()
+rebaixadas = set()  # janelas do jogo marcadas como "abaixo" por este vigia
+# Depois de soltar, o Marco às vezes deixa o jogo (em tela cheia, com o foco)
+# atrás dos painéis, e nem reativar nem mudar outros estados refaz a ordem.
+# Minimizar e restaurar resolve: confere a ordem e, se o jogo não estiver no
+# topo, faz isso uma vez (uma piscada no começo da partida). Restaura assim
+# que o Marco marca o jogo como oculto; o tempo é só a garantia
+CONFERENCIAS = (0.1, 0.5, 1.0)
+RESTAURAR_APOS = 0.3
+pendentes = []  # (instante, janela, ação)
+minimizadas = set()  # minimizadas por este vigia, esperando restaurar
+
+
+def soltar():
+    for j in rebaixadas:
+        log('soltando', hex(j))
+        mudar_estado(j, False, ABAIXO)
+        agora = time.monotonic()
+        pendentes.extend((agora + t, j, 'conferir') for t in CONFERENCIAS)
+    rebaixadas.clear()
+
+
+def conferir_topo(j):
+    # só se o jogo ainda tem o foco (se o usuário trocou de janela, não insiste)
+    if (propriedade(raiz, ATIVA) or [0])[0] != j:
+        return
+    pilha = propriedade(raiz, PILHA) or []
+    if j in pilha and pilha[-1] != j:
+        log('jogo fora do topo, minimizando e restaurando', hex(j))
+        # já resolve: as outras conferências desta janela não são precisas
+        pendentes[:] = [p for p in pendentes if p[1] != j]
+        minimizadas.add(j)
+        x.XIconifyWindow(d, ctypes.c_ulong(j), x.XDefaultScreen(d))
+        x.XFlush(d)
+        pendentes.append((time.monotonic() + RESTAURAR_APOS, j, 'restaurar'))
+
+
+def ativar(janela):
+    mensagem(janela, ATIVA, 2)  # 2: pedido de "pager"; também tira do minimizado
+
+
+def restaurar(janela):
+    if janela in minimizadas:
+        minimizadas.discard(janela)
+        pendentes[:] = [p for p in pendentes if p[1] != janela]
+        log('restaurando', hex(janela))
+        ativar(janela)
+
+
+def conferir():
+    atuais = set(propriedade(raiz, LISTA) or [])
+    vigiadas.intersection_update(atuais)
+    rebaixadas.intersection_update(atuais)
+    for j in atuais - vigiadas:
+        classe = propriedade(j, WM_CLASS) or b''
+        if not classe.lower().startswith(b'arcade.exe'):
+            continue
+        # o estado pode chegar depois do mapeamento: avisa quando mudar
+        x.XSelectInput(d, ctypes.c_ulong(j), ctypes.c_long(PropertyChangeMask))
+        vigiadas.add(j)
+    estados = {j: propriedade(j, ESTADO) or [] for j in vigiadas}
+    carregando = [j for j, e in estados.items() if ACIMA in e and SEM_BARRA in e]
+    if not carregando:
+        soltar()
+        return
+    for j, e in estados.items():
+        if j not in carregando and j not in rebaixadas and TELA_CHEIA in e:
+            log('rebaixando', hex(j), 'enquanto carrega', [hex(c) for c in carregando])
+            mudar_estado(j, True, ABAIXO)
+            rebaixadas.add(j)
+
+
+def sair(*_):
+    soltar()
+    sys.exit(0)
+
+
+signal.signal(signal.SIGTERM, sair)
+signal.signal(signal.SIGINT, sair)
+x.XSelectInput(d, ctypes.c_ulong(raiz), ctypes.c_long(PropertyChangeMask))
+conferir()
+
+
+def principal():
+    ev = Evento()
+    conexao = x.XConnectionNumber(d)
+    while True:
+        # select em vez de XNextEvent bloqueante: assim o SIGTERM é tratado na hora
+        espera = None
+        if pendentes:
+            espera = max(0, min(p[0] for p in pendentes) - time.monotonic())
+        select.select([conexao], [], [], espera)
+        agora = time.monotonic()
+        for item in [p for p in pendentes if p[0] <= agora]:
+            if item not in pendentes:
+                continue
+            pendentes.remove(item)
+            if item[2] == 'restaurar':
+                restaurar(item[1])
+            else:
+                conferir_topo(item[1])
+        while x.XPending(d):
+            x.XNextEvent(d, ctypes.byref(ev))
+            if ev.type == PropertyNotify and ev.xproperty.atom in (LISTA, ESTADO):
+                j = ev.xproperty.window
+                if j in minimizadas and OCULTA in (propriedade(j, ESTADO) or []):
+                    restaurar(j)
+                conferir()
+
+
+try:
+    principal()
+finally:
+    # qualquer falha: devolve o jogo ao normal antes de sair
+    soltar()
+EOF
+
 # ---------------------------------------------------------------------------
 # 3. Lançador que roda dentro do sandbox
 # ---------------------------------------------------------------------------
@@ -624,6 +895,16 @@ if [ "$(cat "$WINEPREFIX/.fp-fontes" 2>/dev/null)" != "$FONTES_VERSAO" ]; then
     cp -f /app/share/frameperfect/fontes/*.ttf "$FONTES_WIN/"
     wine regedit /app/share/frameperfect/fontes.reg && wineserver -w &&
         echo "$FONTES_VERSAO" > "$WINEPREFIX/.fp-fontes"
+fi
+
+# --- WPF por software ---
+# Com aceleração (D3D9 -> wined3d -> OpenGL) os popups do WPF (combobox,
+# menus, tooltips), que são janelas layered/transparentes, ganham uma janela
+# filha de OpenGL por cima e ficam invisíveis e sem resposta ao mouse.
+if [ ! -f "$WINEPREFIX/.fp-wpf-software" ]; then
+    wine reg add 'HKCU\Software\Microsoft\Avalon.Graphics' \
+        /v DisableHWAcceleration /t REG_DWORD /d 1 /f >/dev/null 2>&1 &&
+        wineserver -w && touch "$WINEPREFIX/.fp-wpf-software"
 fi
 
 # --- DXVK opcional (Flatseal: USE_DXVK=true) ---
@@ -787,17 +1068,79 @@ for f in settings.ini gamesettings inputprofiles; do
     atalho $EMU/ps1/$f /var/config/emulator/ps1/$f
 done
 
+# --- Negrito da fonte do placar do emulador ---
+# O emulador pede a Johnny Fever (fonte_placar.otf, só Regular) em negrito, e
+# o negrito sintético do Wine deixa os nomes dos jogadores "esmagados". Uma
+# cópia marcada como Bold (fontes.py --bold) em C:\windows\Fonts é usada no
+# lugar. Refeita quando o cliente traz outra fonte_placar.otf.
+PLACAR=$JOGO/emuladores/arcade/fonte_placar.otf
+if [ -f "$PLACAR" ]; then
+    PLACAR_MARCA="1 $(cksum < "$PLACAR")"
+    if [ "$(cat "$WINEPREFIX/.fp-placar-bold" 2>/dev/null)" != "$PLACAR_MARCA" ]; then
+        echo "Gerando a Johnny Fever Bold"
+        python3 /app/share/frameperfect/fontes.py "$PLACAR" \
+                "$WINEPREFIX/drive_c/windows/Fonts/JohnnyFever-Bold.otf" --bold &&
+            wine reg add 'HKLM\Software\Microsoft\Windows NT\CurrentVersion\Fonts' \
+                /v 'Johnny Fever Bold (TrueType)' /t REG_SZ /d JohnnyFever-Bold.otf /f \
+                >/dev/null 2>&1 &&
+            echo "$PLACAR_MARCA" > "$WINEPREFIX/.fp-placar-bold"
+    fi
+fi
+
 case $1 in
     winecfg|regedit|taskmgr|explorer) exec wine "$@" ;;
     winetricks) shift; exec winetricks "$@" ;;
     shell) exec /bin/sh ;;
 esac
 
+# --- Aviso do compositor do MATE ---
+# O compositor do Marco só redesenha os popups do WPF (selectbox, menus) quando
+# outro evento acontece na tela, ex.: o mouse sair do app. O Flatpak não mexe
+# no desktop, então só avisa, a cada abertura, até trocarem o compositor ou
+# marcarem "Não exibir mais".
+SEM_AVISO=$DATA/.fp-sem-aviso-compositor
+case ${XDG_CURRENT_DESKTOP:-} in *MATE*)
+    if [ ! -f "$SEM_AVISO" ] && command -v zenity >/dev/null &&
+       python3 /app/share/frameperfect/compositor.py; then
+        cat <<'AVISO' | zenity --text-info --title="Frame Perfect: compositor do MATE" \
+                --width=640 --height=420 --ok-label="Não exibir mais" \
+                --cancel-label="Fechar" 2>/dev/null && touch "$SEM_AVISO" &
+O compositor do MATE (Marco) atrasa os menus do Frame Perfect: as listas
+de seleção só aparecem quando o mouse sai da janela do app.
+
+Para corrigir, troque o compositor do Marco pelo picom (mantém sombras e
+transparências). Num terminal:
+
+1. Instale o picom (Ubuntu/Debian/Mint):
+   sudo apt install picom
+
+2. Desligue o compositor do Marco:
+   gsettings set org.mate.Marco.general compositing-manager false
+
+3. Inicie o picom agora e em todo login:
+   picom --backend xrender --unredir-if-possible &
+   mkdir -p ~/.config/autostart
+   printf '[Desktop Entry]\nType=Application\nName=Picom\nExec=picom --backend xrender --unredir-if-possible\nX-MATE-Autostart-enabled=true\n' > ~/.config/autostart/picom.desktop
+
+O --unredir-if-possible tira o compositor do caminho nos jogos em tela
+cheia. Para desfazer: apague ~/.config/autostart/picom.desktop e rode
+gsettings set org.mate.Marco.general compositing-manager true
+
+Este aviso some sozinho depois da troca.
+AVISO
+    fi
+;; esac
+
 cd "$JOGO" || exit 1
+# Vigia da tela "Carregando partida" do emulador (ver vigia.py); no MATE ela
+# fica escondida atrás do jogo em tela cheia
+python3 /app/share/frameperfect/vigia.py 2>/dev/null &
+VIGIA=$!
 wine "$JOGO/FramePerfect.exe" "$@"
 # O auto-update fecha o launcher e reabre pelo updater.exe; espera todos os
 # processos do Wine terminarem para o sandbox não ser encerrado no meio
 wineserver -w
+kill $VIGIA 2>/dev/null
 EOF
 sed -i "s/@PUBLICO@/$PUBLICO/" scripts/frameperfect.sh
 chmod +x scripts/frameperfect.sh
@@ -908,6 +1251,9 @@ modules:
     build-commands:
 ${CLIENTE_CMDS}      - install -Dm755 frameperfect.sh /app/bin/frameperfect
       - install -Dm644 atualizar.py /app/share/frameperfect/atualizar.py
+      - install -Dm644 compositor.py /app/share/frameperfect/compositor.py
+      - install -Dm644 vigia.py /app/share/frameperfect/vigia.py
+      - install -Dm644 fontes.py /app/share/frameperfect/fontes.py
       - mkdir -p /app/share/frameperfect/fontes
       - python3 fontes.py NotoEmoji.ttf /app/share/frameperfect/fontes/NotoEmoji.ttf --notdef-vazio
       # Fontes sem ligadura (ver scripts/fontes.py); a Tahoma vem da base Wine
@@ -929,6 +1275,10 @@ ${CLIENTE_SRCS}      - type: file
         path: scripts/fontes.py
       - type: file
         path: scripts/atualizar.py
+      - type: file
+        path: scripts/compositor.py
+      - type: file
+        path: scripts/vigia.py
 ${BARLOW_SRCS}      - type: file
         path: $APP_ID.desktop
       - type: file
@@ -1146,6 +1496,10 @@ Para levar a outro PC: gere o `.flatpak` (opção 1 ou 3 do menu) e instale lá 
 
 - Cliente WPF rodando com Wine 11 + Wine Mono, sem precisar do .NET da Microsoft
 - Fontes corrigidas: sem quadrados no lugar de símbolos, emojis e ligaduras (fi, fl)
+- Listas de seleção e menus do launcher abrindo e respondendo ao mouse (WPF desenhado por software)
+- Nomes dos jogadores no placar do emulador sem o negrito "esmagado" do Wine
+- Tela "Carregando partida" do emulador visível no MATE, sem os painéis por cima do jogo depois
+- No MATE, aviso (até trocar ou marcar "Não exibir mais") para trocar o compositor do Marco pelo picom, que atrasa os menus
 - Links `frameperfect://replay?...` do site abrem o app
 - Atalhos em `~/.var/app/cc.frameperfect.FramePerfect` para as ROMs (`data/roms`), os favoritos (`config/favoritos.json`) e as configs dos emuladores (`config/emulator/arcade/{games,presets,ips,localisation}` e do DuckStation em `config/emulator/ps1`)
 - O cliente roda em `~/.var/app/cc.frameperfect.FramePerfect` com links para os arquivos estáticos; as atualizações do cliente são aplicadas pelo lançador, e os dados apagados são recriados ao abrir

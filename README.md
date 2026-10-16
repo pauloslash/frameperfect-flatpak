@@ -147,6 +147,42 @@ de baixar ou compilar.
   famílias tentadas); a correção (outra fonte ou outro mapeamento) é à mão.
   Atualizações do cliente aplicadas pelo lançador não passam por ela; a
   próxima compilação, que baixa a versão nova, confere.
+- Popups do WPF (selectbox, menus, tooltips, alguns diálogos) são janelas
+  transparentes ("layered"). Com a aceleração por hardware (D3D9 → wined3d →
+  OpenGL) elas ficam invisíveis e sem resposta ao mouse, por isso o lançador
+  liga `DisableHWAcceleration` (`HKCU\Software\Microsoft\Avalon.Graphics`) e o
+  WPF desenha por software. No MATE, o compositor do Marco também não
+  redesenha essas janelas na hora: o selectbox só aparece quando o mouse sai
+  do app. Isso é do desktop, não do Flatpak; a solução é trocar o compositor
+  do Marco pelo picom (com o picom os popups abrem na hora, com efeito):
+  `gsettings set org.mate.Marco.general compositing-manager false` e
+  `picom --backend xrender --unredir-if-possible` no início da sessão (o
+  `--unredir-if-possible` tira o compositor do caminho em tela cheia). No
+  MATE, se o compositor ativo for o do Marco (`scripts/compositor.py`), o
+  lançador mostra esses passos num aviso a cada abertura, até a troca ou até
+  marcarem "Não exibir mais" (`.../data/.fp-sem-aviso-compositor`). Nada disso
+  afeta o emulador: ele é outro processo (`arcade.exe`), com o próprio
+  DirectX 9, e não é WPF.
+- Nomes dos jogadores no placar do emulador: ele pede a Johnny Fever
+  (`fonte_placar.otf`, que só tem Regular) em negrito, e o negrito sintético
+  do Wine engrossa as letras em todas as direções (o Windows só na
+  horizontal), deixando o texto "esmagado". O lançador gera com
+  `fontes.py --bold` uma cópia marcada como Bold em `C:\windows\Fonts` do
+  prefixo, que o Wine usa no lugar (refeita se o cliente trouxer outra
+  `fonte_placar.otf`). O texto continua sem suavização: a `d3dx9` do
+  emulador no Wine desenha sem antialiasing, e a `d3dx9` do próprio Wine
+  derruba o modo DirectX 9 do emulador (2 quedas e o launcher marca o
+  DirectX 9 como quebrado: `dx9Broken` no `rbf-launcher.json`).
+- Tela "Carregando partida" do emulador: é uma janela "sempre por cima" que
+  não aceita foco, e o Marco (MATE) põe o jogo, em tela cheia e com o foco,
+  acima dela (fica só uma tela preta). O lançador roda o `scripts/vigia.py`,
+  que espera eventos do X e, enquanto ela existir, marca o jogo como "abaixo"
+  (`_NET_WM_STATE_BELOW`); quando ela fecha, tira a marca. Às vezes o Marco
+  deixa o jogo atrás dos painéis depois disso (reativar ou mudar outros
+  estados não resolve); o vigia confere a ordem e, se for o caso, minimiza e
+  restaura o jogo uma vez (~30 ms, assim que o Marco marca a janela como
+  oculta). O vigia acaba junto com o app. Ativar a janela de carregando não
+  funciona: o Marco ignora.
 - DXVK: desligado; ative com `flatpak override --user --env=USE_DXVK=true cc.frameperfect.FramePerfect`.
 - Depuração: `flatpak run cc.frameperfect.FramePerfect winecfg|regedit|winetricks ...|shell`;
   logs do cliente em `.../data/FramePerfect/rbf-launcher.log`.
